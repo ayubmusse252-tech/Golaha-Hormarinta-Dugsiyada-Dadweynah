@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="so">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Samaynta Imtixaanka</title>
+<style>
+  :root{
+    --bg:#f4f5f7; --surface:#fff; --surface2:#eef0f3; --border:#d9dce2;
+    --text:#1b1f27; --dim:#5c6370; --accent:#1e4fa3; --accent2:#163d82;
+    --good:#1e8e5a; --bad:#c0392b; --radius:12px;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;}
+  .wrap{max-width:780px;margin:0 auto;padding:16px 14px 60px;}
+  h1{font-size:1.25rem;margin:4px 0 2px;}
+  h2{font-size:1.05rem;margin:0 0 10px;}
+  .sub{color:var(--dim);font-size:.85rem;margin:0 0 16px;}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:14px;}
+  label{display:block;font-size:.82rem;font-weight:600;margin:10px 0 4px;}
+  textarea,input,select{width:100%;padding:10px 11px;border-radius:9px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:.92rem;font-family:inherit;}
+  textarea{min-height:110px;resize:vertical;line-height:1.4;}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  .row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;}
+  @media (max-width:480px){ .row3{grid-template-columns:1fr 1fr;} }
+  button{cursor:pointer;border:none;border-radius:9px;font-weight:700;font-size:.92rem;padding:12px 16px;}
+  .btn-primary{background:var(--accent);color:#fff;width:100%;margin-top:14px;}
+  .btn-primary:disabled{opacity:.6;cursor:default;}
+  .btn-ghost{background:var(--surface2);color:var(--text);border:1px solid var(--border);}
+  .actions{display:flex;gap:8px;margin-top:10px;}
+  .actions button{flex:1;}
+  .status{font-size:.82rem;color:var(--dim);margin-top:8px;min-height:1.2em;}
+  .err{color:var(--bad);font-size:.85rem;margin-top:8px;}
+  .hidden{display:none !important;}
+  #examOutput{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin-top:4px;}
+  .ex-head{text-align:center;border-bottom:2px solid var(--text);padding-bottom:10px;margin-bottom:14px;}
+  .ex-head h2{margin:0 0 4px;font-size:1.1rem;}
+  .ex-head .meta{font-size:.85rem;color:var(--dim);}
+  .ex-fields{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:.85rem;margin-bottom:16px;}
+  .ex-fields span{border-bottom:1px solid var(--border);padding-bottom:2px;}
+  .ex-sources{font-size:.75rem;color:var(--dim);text-align:center;margin:-6px 0 14px;}
+  .ex-section-title{font-weight:700;margin:18px 0 6px;font-size:.95rem;border-bottom:1px solid var(--border);padding-bottom:4px;}
+  .ex-instr{font-size:.82rem;color:var(--dim);margin-bottom:8px;font-style:italic;}
+  .q{margin-bottom:12px;font-size:.92rem;line-height:1.5;}
+  .q b{margin-right:4px;}
+  .q .marks{float:left;color:var(--accent);font-size:.78rem;margin-right:6px;}
+  .q-diagram{margin:8px 0 8px 18px;max-width:280px;}
+  .q-diagram svg{width:100%;height:auto;border:1px solid var(--border);border-radius:6px;background:#fff;}
+  .opts{margin:4px 0 0 18px;font-size:.88rem;}
+  .opts div{margin-bottom:2px;}
+  .bloom-tag{display:inline-block;background:var(--surface2);color:var(--dim);font-size:.68rem;padding:1px 7px;border-radius:20px;margin-left:6px;vertical-align:middle;}
+  .answerkey{margin-top:20px;border-top:1px dashed var(--border);padding-top:12px;}
+  .answerkey summary{cursor:pointer;font-weight:700;font-size:.88rem;color:var(--accent);}
+  .answerkey ol{font-size:.85rem;padding-left:20px;}
+  .lesson{border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:10px;background:var(--surface2);}
+  .lesson-top{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
+  .lesson-top label{display:flex;align-items:center;gap:6px;margin:0;font-size:.8rem;white-space:nowrap;}
+  .lesson-top input[type=checkbox]{width:auto;}
+  .lesson .row2{display:grid;grid-template-columns:2fr 1fr;gap:8px;margin-bottom:6px;}
+  .lesson .rm{background:transparent;color:var(--bad);border:1px solid var(--bad);padding:4px 10px;font-size:.75rem;margin-left:auto;}
+  .l-upload{display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap;}
+  .l-upload input[type=file]{width:auto;flex:1;min-width:160px;font-size:.78rem;padding:6px;}
+  .l-filestatus{font-size:.72rem;color:var(--dim);}
+  .l-ocr{background:var(--accent);color:#fff;font-size:.72rem;padding:4px 10px;display:none;}
+  .btn-add{background:var(--surface2);color:var(--accent);border:1px dashed var(--accent);width:100%;margin-top:4px;}
+  .diagram-toggle{display:flex;align-items:center;gap:8px;margin-top:4px;font-size:.85rem;}
+  .diagram-toggle input{width:auto;}
+  #loginScreen{max-width:320px;margin:70px auto;text-align:center;}
+  #loginScreen input{margin-bottom:10px;}
+  .saved-item{display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--border);font-size:.86rem;gap:8px;}
+  .saved-item:last-child{border-bottom:none;}
+  .saved-item .meta{color:var(--dim);font-size:.75rem;}
+  .saved-item .sv-btns{display:flex;gap:6px;flex-shrink:0;}
+  .saved-item button{padding:5px 9px;font-size:.72rem;}
+  @media print{
+    body{background:#fff;color:#000;}
+    .no-print{display:none !important;}
+    #examOutput{border:none;padding:0;}
+    .bloom-tag{display:none;}
+  }
+</style>
+</head>
+<body>
+
+<div id="loginScreen" class="hidden">
+  <h1>📝 Samaynta Imtixaanka</h1>
+  <p class="sub">Geli password-ka maamulka</p>
+  <input type="password" id="pwInput" placeholder="Password">
+  <button class="btn-primary" id="loginBtn">Gal</button>
+  <div class="err hidden" id="loginErr"></div>
+</div>
+
+<div id="appShell" class="hidden">
+<div class="wrap">
+  <h1>📝 Samaynta Imtixaanka</h1>
+  <p class="sub">Ku dheji ama soo geli buugga casharka, nidaamku wuxuu kuu dajin doonaa imtixaan heer-qaran ah oo ku dhisan Bloom's Taxonomy.</p>
+
+  <div class="card no-print">
+    <h2>📚 Imtixaanadii Hore</h2>
+    <div id="savedList" class="status">Waa la soo dejinayaa...</div>
+  </div>
+
+  <div class="card no-print" id="formCard">
+    <label style="margin-top:0;">Casharada / Cutubyada</label>
+    <div id="lessonsWrap"></div>
+    <button class="btn-add" id="addLessonBtn" type="button">➕ Ku dar Cashar/Cutub kale</button>
+
+    <div class="row">
+      <div><label>Maadada</label><input id="subject" placeholder="tusaale: Bayoolaji"></div>
+      <div><label>Fasalka</label><input id="klass" placeholder="tusaale: Form 4"></div>
+    </div>
+    <div class="row3">
+      <div><label>Tirada su'aalaha ikhtiyaar (MCQ)</label><input id="mcqN" type="number" min="0" max="30" value="10"></div>
+      <div><label>Tirada su'aalaha qaab-dhismeed</label><input id="structN" type="number" min="0" max="20" value="8"></div>
+      <div><label>Wadarta dhibcaha</label><input id="totalMarks" type="number" min="10" max="200" value="100"></div>
+    </div>
+    <div class="row">
+      <div><label>Waqtiga imtixaanka</label><input id="duration" value="2 saac iyo 10 daqiiqo"></div>
+      <div><label>Dugsiga</label><input id="schoolName" placeholder="Dugsiga Sare ee ..."></div>
+    </div>
+    <label class="diagram-toggle">
+      <input type="checkbox" id="diagramToggle" checked>
+      📐 Samee sawir/diagram haddii su'aal u baahato
+    </label>
+
+    <button class="btn-primary" id="genBtn">⚡ Samee Imtixaanka</button>
+    <div class="status" id="statusMsg"></div>
+    <div class="err hidden" id="errMsg"></div>
+  </div>
+
+  <div id="examOutput" class="hidden"></div>
+  <div class="actions no-print hidden" id="resultActions">
+    <button class="btn-ghost" id="printBtn">🖨️ Daabac / Save PDF</button>
+    <button class="btn-ghost" id="newBtn">🔄 Imtixaan Cusub</button>
+  </div>
+</div>
+</div>
+
+<script>
+(function(){
+  const $ = id => document.getElementById(id);
+  const PW_KEY = "imtixaan_admin_pw";
+  const getPw = () => localStorage.getItem(PW_KEY) || "";
+
+  async function api(path, opts){
+    opts = opts || {};
+    opts.headers = Object.assign({ "Content-Type":"application/json", "x-admin-password": getPw() }, opts.headers||{});
+    const res = await fetch(path, opts);
+    if (res.status === 401){ showLogin("Sirta waa qalad."); throw new Error("unauthorized"); }
+    const j = await res.json().catch(()=>({}));
+    if (!res.ok) throw new Error(j.error || "server error");
+    return j;
+  }
+
+  function showLogin(msg){
+    $("loginScreen").classList.remove("hidden");
+    $("appShell").classList.add("hidden");
+    if (msg){ $("loginErr").textContent = msg; $("loginErr").classList.remove("hidden"); }
+  }
+  function showApp(){
+    $("loginScreen").classList.add("hidden");
+    $("appShell").classList.remove("hidden");
+  }
+
+  async function boot(){
+    const pw = getPw();
+    if (!pw){ showLogin(); return; }
+    try{
+      const j = await fetch("/api/login", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({password:pw}) }).then(r=>r.json());
+      if (j.ok){ showApp(); loadSavedExams(); }
+      else showLogin();
+    } catch(e){ showLogin("Khalad xidhiidh server ah."); }
+  }
+
+  $("loginBtn").addEventListener("click", async ()=>{
+    const pw = $("pwInput").value;
+    try{
+      const res = await fetch("/api/login", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({password:pw}) });
+      const j = await res.json();
+      if (j.ok){ localStorage.setItem(PW_KEY, pw); showApp(); loadSavedExams(); }
+      else { $("loginErr").textContent = "Sirta waa qalad."; $("loginErr").classList.remove("hidden"); }
+    } catch(e){ $("loginErr").textContent = "Khalad server ah."; $("loginErr").classList.remove("hidden"); }
+  });
+
+  // ---------- Saved exams ----------
+  async function loadSavedExams(){
+    const el = $("savedList");
+    try{
+      const rows = await api("/api/exams");
+      if (!rows.length){ el.textContent = "Wali imtixaan lama keydin."; return; }
+      el.innerHTML = rows.map(r=>`
+        <div class="saved-item">
+          <div>
+            <b>${esc(r.subject)}</b> — ${esc(r.class_name)}
+            <div class="meta">${esc(r.sources||"")} · ${new Date(r.created_at).toLocaleDateString()}</div>
+          </div>
+          <div class="sv-btns">
+            <button class="btn-ghost" data-load="${r.id}">👁️ Fur</button>
+            <button class="btn-ghost" data-del="${r.id}" style="color:var(--bad);">🗑️</button>
+          </div>
+        </div>`).join("");
+      el.querySelectorAll("[data-load]").forEach(b=>b.addEventListener("click", ()=>loadExam(b.dataset.load)));
+      el.querySelectorAll("[data-del]").forEach(b=>b.addEventListener("click", async ()=>{
+        if (!confirm("Ma hubtaa inaad tirtirto imtixaankan?")) return;
+        await api("/api/exams/"+b.dataset.del, {method:"DELETE"});
+        loadSavedExams();
+      }));
+    } catch(e){ el.textContent = "⚠️ Khalad soo dejin ah."; }
+  }
+  async function loadExam(id){
+    try{
+      const row = await api("/api/exams/"+id);
+      const data = row.data || {};
+      renderExam(data, data.meta || { subject: row.subject, klass: row.class_name, totalMarks: row.total_marks, duration: row.duration, sourcesLabel: row.sources });
+      window.scrollTo({top: document.getElementById("examOutput").offsetTop - 10, behavior:"smooth"});
+    } catch(e){ alert("Khalad: " + e.message); }
+  }
+
+  // ---------- Lesson blocks (manual text, file upload, OCR for scanned PDFs) ----------
+  const lessonsWrap = $("lessonsWrap");
+  let lessonSeq = 0;
+  const pdfPagesMap = new Map();  // lessonId -> extracted text per page
+  const pdfDocMap = new Map();    // lessonId -> pdf.js document proxy (for OCR re-render)
+  const loadedScripts = {};
+  function loadScript(url){
+    if (loadedScripts[url]) return loadedScripts[url];
+    loadedScripts[url] = new Promise((res, rej)=>{
+      const s = document.createElement("script");
+      s.src = url; s.onload = res; s.onerror = ()=>rej(new Error("load failed: "+url));
+      document.head.appendChild(s);
+    });
+    return loadedScripts[url];
+  }
+  function parsePageRange(str, max){
+    const out = new Set();
+    (str||"").split(",").forEach(part=>{
+      part = part.trim(); if (!part) return;
+      const m = part.match(/^(\d+)\s*-\s*(\d+)$/);
+      if (m){ let a=parseInt(m[1],10), b=parseInt(m[2],10); if(a>b)[a,b]=[b,a];
+        for(let i=a;i<=b && i<=max;i++) out.add(i);
+      } else { const n = parseInt(part,10); if (n>=1 && n<=max) out.add(n); }
+    });
+    return Array.from(out).sort((a,b)=>a-b);
+  }
+  async function fillFromPdfPages(lessonId, div){
+    const pages = pdfPagesMap.get(lessonId);
+    if (!pages) return;
+    const rangeStr = div.querySelector(".l-pages").value.trim();
+    const status = div.querySelector(".l-filestatus");
+    const ocrBtn = div.querySelector(".l-ocr");
+    const nums = rangeStr ? parsePageRange(rangeStr, pages.length) : pages.map((_,i)=>i+1);
+    const text = nums.map(n=>pages[n-1]||"").join("\n\n");
+    div.querySelector(".l-text").value = text;
+    const avgLen = text.length / Math.max(1, nums.length);
+    if (avgLen < 15){
+      status.textContent = `⚠️ Buuggu wuxuu u muuqdaa mid sawir ah (scanned) — ${pages.length} bog, wax qoraal ah lagama helin. Isticmaal "🔍 Akhri Sawirka (OCR)".`;
+      ocrBtn.style.display = "inline-block";
+    } else {
+      status.textContent = `✅ ${pages.length} bog oo buuggu leeyahay — ${nums.length} bog ayaa la geliyay.`;
+      ocrBtn.style.display = "none";
+    }
+  }
+  async function runOcr(lessonId, div){
+    const pdf = pdfDocMap.get(lessonId);
+    if (!pdf) return;
+    const status = div.querySelector(".l-filestatus");
+    const rangeStr = div.querySelector(".l-pages").value.trim();
+    const nums = rangeStr ? parsePageRange(rangeStr, pdf.numPages) : Array.from({length: Math.min(pdf.numPages,20)}, (_,i)=>i+1);
+    if (!nums.length){ status.textContent = "⚠️ Fadlan geli bogagga aad rabto (tusaale: 1-5)."; return; }
+    status.textContent = `⏳ Sawirka waa la akhrinayaa (OCR)... 0/${nums.length}`;
+    let fullText = "";
+    const BATCH = 4;
+    try{
+      for (let i=0; i<nums.length; i+=BATCH){
+        const batch = nums.slice(i, i+BATCH);
+        const images = [];
+        for (const pageNum of batch){
+          const page = await pdf.getPage(pageNum);
+          const viewport = page.getViewport({scale: 1.6});
+          const canvas = document.createElement("canvas");
+          canvas.width = viewport.width; canvas.height = viewport.height;
+          await page.render({canvasContext: canvas.getContext("2d"), viewport}).promise;
+          images.push(canvas.toDataURL("image/png").split(",")[1]);
+        }
+        const r = await api("/api/ocr-pages", { method:"POST", body: JSON.stringify({ images, mediaType:"image/png" }) });
+        fullText += (fullText?"\n\n":"") + (r.text||"");
+        status.textContent = `⏳ Sawirka waa la akhrinayaa (OCR)... ${Math.min(i+BATCH,nums.length)}/${nums.length}`;
+      }
+      div.querySelector(".l-text").value = fullText;
+      status.textContent = fullText.trim() ? `✅ OCR dhammaystirmay — ${nums.length} bog.` : "⚠️ Wax qoraal ah lagama helin sawirrada.";
+    } catch(e){
+      status.textContent = "⚠️ Khalad OCR ah: " + e.message;
+    }
+  }
+  async function handleFile(file, lessonId, div){
+    const status = div.querySelector(".l-filestatus");
+    const ocrBtn = div.querySelector(".l-ocr");
+    ocrBtn.style.display = "none";
+    const name = file.name.toLowerCase();
+    try{
+      if (name.endsWith(".pdf")){
+        status.textContent = "⏳ Buugga (PDF) waa la akhrinayaa...";
+        await loadScript("https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js");
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+        const buf = await file.arrayBuffer();
+        const pdf = await window.pdfjsLib.getDocument({data: buf}).promise;
+        pdfDocMap.set(lessonId, pdf);
+        const pages = [];
+        for (let i=1;i<=pdf.numPages;i++){
+          const page = await pdf.getPage(i);
+          const content = await page.getTextContent();
+          pages.push(content.items.map(it=>it.str).join(" "));
+        }
+        pdfPagesMap.set(lessonId, pages);
+        await fillFromPdfPages(lessonId, div);
+      } else if (name.endsWith(".docx")){
+        status.textContent = "⏳ Buugga (DOCX) waa la akhrinayaa...";
+        await loadScript("https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js");
+        const buf = await file.arrayBuffer();
+        const res = await window.mammoth.extractRawText({arrayBuffer: buf});
+        div.querySelector(".l-text").value = res.value || "";
+        status.textContent = res.value ? "✅ DOCX la akhriyay — gacanta ka saar waxa aan loo baahnayn." : "⚠️ Wax qoraal ah lagama helin.";
+      } else {
+        const txt = await file.text();
+        div.querySelector(".l-text").value = txt;
+        status.textContent = "✅ La akhriyay.";
+      }
+    } catch(e){
+      status.textContent = "⚠️ Khalad akhrin ah: " + e.message;
+    }
+  }
+
+  function addLesson(){
+    lessonSeq++;
+    const id = "lesson" + lessonSeq;
+    const div = document.createElement("div");
+    div.className = "lesson";
+    div.id = id;
+    div.innerHTML = `
+      <div class="lesson-top">
+        <label><input type="checkbox" class="l-inc" checked> Ku dar</label>
+        <button type="button" class="l-ocr">🔍 Akhri Sawirka (OCR)</button>
+        <button type="button" class="rm">🗑️ Ka saar</button>
+      </div>
+      <div class="row2">
+        <input class="l-chapter" placeholder="Magaca Cutubka/Casharka (tusaale: Cutubka 3)">
+        <input class="l-pages" placeholder="Bogagga (tusaale: 24-31)">
+      </div>
+      <div class="l-upload">
+        <input type="file" class="l-file" accept=".pdf,.docx,.txt,.md">
+        <span class="l-filestatus"></span>
+      </div>
+      <textarea class="l-text" placeholder="...ama ku dheji halkan qoraalka gacanta"></textarea>`;
+    lessonsWrap.appendChild(div);
+    div.querySelector(".rm").addEventListener("click", ()=>{
+      pdfPagesMap.delete(id); pdfDocMap.delete(id);
+      if (lessonsWrap.children.length > 1) div.remove();
+      else { div.querySelector(".l-text").value=""; div.querySelector(".l-chapter").value=""; div.querySelector(".l-pages").value=""; div.querySelector(".l-filestatus").textContent=""; }
+    });
+    div.querySelector(".l-file").addEventListener("change", (e)=>{
+      const f = e.target.files[0]; if (f) handleFile(f, id, div);
+    });
+    div.querySelector(".l-pages").addEventListener("change", ()=>{
+      if (pdfPagesMap.has(id)) fillFromPdfPages(id, div);
+    });
+    div.querySelector(".l-ocr").addEventListener("click", ()=>runOcr(id, div));
+  }
+  addLesson();
+  $("addLessonBtn").addEventListener("click", ()=>addLesson());
+
+  function collectLessons(){
+    return Array.from(lessonsWrap.querySelectorAll(".lesson")).map(div=>({
+      include: div.querySelector(".l-inc").checked,
+      chapter: div.querySelector(".l-chapter").value.trim(),
+      pages: div.querySelector(".l-pages").value.trim(),
+      text: div.querySelector(".l-text").value.trim()
+    })).filter(l=>l.include && l.text);
+  }
+
+  // ---------- Generate ----------
+  const genBtn = $("genBtn"), statusMsg = $("statusMsg"), errMsg = $("errMsg");
+  const examOutput = $("examOutput"), resultActions = $("resultActions"), formCard = $("formCard");
+
+  function esc(s){ return String(s==null?"":s).replace(/[&<>"]/g, m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m])); }
+  function sanitizeSvg(svg){
+    return String(svg||"").replace(/<script[\s\S]*?<\/script>/gi,"").replace(/\son\w+\s*=\s*"[^"]*"/gi,"").replace(/\son\w+\s*=\s*'[^']*'/gi,"");
+  }
+  function showErr(msg){ errMsg.textContent = "⚠️ " + msg; errMsg.classList.remove("hidden"); }
+  function hideErr(){ errMsg.classList.add("hidden"); errMsg.textContent = ""; }
+
+  async function generate(){
+    const lessons = collectLessons();
+    if (!lessons.length){ showErr("Fadlan ku dheji ama soo geli qoraalka ugu yaraan hal cashar/cutub."); return; }
+    hideErr();
+    genBtn.disabled = true;
+    statusMsg.textContent = "⏳ Fadlan sug, waa la dejinayaa imtixaanka... (dhawaan 20-60 ilbiriqsi)";
+    examOutput.classList.add("hidden");
+    resultActions.classList.add("hidden");
+
+    const body = {
+      subject: $("subject").value.trim() || "Maadada",
+      klass: $("klass").value.trim() || "Fasalka",
+      mcqN: parseInt($("mcqN").value||"0",10),
+      structN: parseInt($("structN").value||"0",10),
+      totalMarks: parseInt($("totalMarks").value||"100",10),
+      duration: $("duration").value.trim() || "2 saac",
+      school: $("schoolName").value.trim(),
+      wantDiagrams: $("diagramToggle").checked,
+      lessons,
+    };
+
+    try{
+      const r = await api("/api/generate-exam", { method:"POST", body: JSON.stringify(body) });
+      renderExam(r.exam, r.meta);
+      statusMsg.textContent = "✅ Imtixaanka waa la diyaariyay oo la keydiyay.";
+      loadSavedExams();
+    } catch(e){
+      showErr(e.message || "Khalad ayaa dhacay.");
+      statusMsg.textContent = "";
+    } finally {
+      genBtn.disabled = false;
+    }
+  }
+
+  function renderExam(data, meta){
+    meta = meta || {};
+    const sections = (data && data.sections) || [];
+    const answerKey = (data && data.answerKey) || [];
+    let html = `<div class="ex-head">
+      ${meta.school ? `<h2>${esc(meta.school)}</h2>` : `<h2>Imtixaanka Maadada</h2>`}
+      <div class="meta">Imtixaanka ${esc(meta.subject)} — ${esc(meta.klass)}</div>
+      <div class="meta">Wadarta Dhibcaha: ${esc(meta.totalMarks)} &nbsp;|&nbsp; Waqtiga: ${esc(meta.duration)}</div>
+    </div>
+    <div class="ex-fields">
+      <span>Magaca Ardayga: ______________________</span>
+      <span>Fasalka: ______</span>
+      <span>Taariikhda: __________</span>
+    </div>`;
+    if (meta.sourcesLabel) html += `<div class="ex-sources">Isha: ${esc(meta.sourcesLabel)}</div>`;
+
+    sections.forEach(sec=>{
+      html += `<div class="ex-section-title">${esc(sec.name)} (${esc(sec.marks)} dhibcood)</div>`;
+      if (sec.instructions) html += `<div class="ex-instr">${esc(sec.instructions)}</div>`;
+      (sec.questions||[]).forEach(q=>{
+        html += `<div class="q"><span class="marks">[${esc(q.marks)}]</span><b>${esc(q.number)}.</b> ${esc(q.text)}<span class="bloom-tag">${esc(q.bloom||"")}</span>`;
+        if (q.svg && /^\s*<svg[\s>]/i.test(q.svg)) html += `<div class="q-diagram">${sanitizeSvg(q.svg)}</div>`;
+        if (q.options && q.options.length) html += `<div class="opts">` + q.options.map(o=>`<div>${esc(o)}</div>`).join("") + `</div>`;
+        html += `</div>`;
+      });
+    });
+
+    if (answerKey.length){
+      html += `<details class="answerkey no-print"><summary>🔑 Furaha Jawaabaha (macalinka kaliya)</summary><ol>`;
+      answerKey.forEach(a=>{ html += `<li value="${esc(a.number)}">${esc(a.answer)}</li>`; });
+      html += `</ol></details>`;
+    }
+
+    examOutput.innerHTML = html;
+    examOutput.classList.remove("hidden");
+    resultActions.classList.remove("hidden");
+  }
+
+  genBtn.addEventListener("click", generate);
+  $("printBtn").addEventListener("click", ()=>window.print());
+  $("newBtn").addEventListener("click", ()=>{
+    examOutput.classList.add("hidden");
+    resultActions.classList.add("hidden");
+    statusMsg.textContent = "";
+    formCard.scrollIntoView({behavior:"smooth"});
+  });
+
+  boot();
+})();
+</script>
+</body>
+</html>
