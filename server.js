@@ -543,23 +543,26 @@ app.post("/api/generate-lesson-plan", requireAdmin, async (req, res) => {
       date: f("date"), day: f("day"), session: f("session"), weekly: f("weekly"), duration: f("duration") || "40 min" };
     if (!meta.unit && !meta.lesson) return res.status(400).json({ error: "Fadlan geli cutubka ama cinwaanka casharka." });
     const src = f("text").slice(0, 30000);
-    const nObj = Math.min(6, Math.max(2, parseInt(b.numObjectives, 10) || 4));
+    const nGiven = parseInt(b.numObjectives, 10);
+    const nObj = nGiven >= 1 ? Math.min(12, nGiven) : 0; // 0 = otomaatig: raac objectives-ka buugga/manhajka
     const lang = LANG_NAMES[b.lang] ? b.lang : src ? detectLang(src) : "en";
     meta.lang = lang;
     const prompt = `You are an experienced teacher in a Somali secondary school writing a STANDARD lesson plan and its matching LESSON NOTE.
 Subject: ${meta.subject || "-"}; Class: ${meta.klass || "-"}; Unit/Chapter: ${meta.unit || "-"}; Lesson title: ${meta.lesson || "-"}; Duration: ${meta.duration}.
 Write everything in ${LANG_NAMES[lang]}.${src ? " Base the content ONLY on the lesson text below." : ""}
 Rules:
-- "objectives": exactly ${nObj} measurable objectives, each starting with an action verb (define, explain, list, apply, compare...) completing "the learner should be able to ...". Do not repeat the lead-in phrase.
+- "objectives": ${nObj
+  ? `exactly ${nObj} measurable objectives chosen by the teacher.`
+  : `AUTOMATIC COUNT. ${src ? "First look in the lesson text for the objectives that the textbook/curriculum itself states for this unit/lesson (e.g. 'Objectives', 'By the end of this unit/lesson you should be able to', 'Learning outcomes'). If found, copy ALL of them, in the same order and the same meaning, without dropping or merging any. If the text states none, " : ""}Use the objectives of the Somali national curriculum for this unit/lesson; if you do not know them, write as many as the lesson genuinely needs (usually 3-8). Do not add filler objectives and do not cut real ones.`} Each starts with an action verb (define, explain, list, apply, compare...) completing "the learner should be able to ...". Do not repeat the lead-in phrase.
 - "introduction": 2-3 sentences linking the unit "${meta.unit}" to the lesson "${meta.lesson}".
 - "methods": 3-4 suitable teaching methods, comma separated. "aids": learning aids, comma separated.
-- "evaluation": exactly 8 short questions/tasks, covering the objectives in order.
-- "note": the LESSON NOTE = a concise summary built from the objectives, the unit and the lesson title. One section per objective in the same order (heading "h" = the key idea of that objective, "p" = 2-4 short lines separated by \\n, with definitions/examples/formulas), then a final section with heading "Summary". Use the same terms as the plan; it must be consistent with it and answer the evaluation items. About 250-400 words.
+- "evaluation": NOT a fixed number. Write as many short questions/tasks as this lesson needs (normally at least one per objective, usually 4-12), covering ALL objectives in order, no padding.
+- "note": the LESSON NOTE = a complete summary built from the objectives, the unit and the lesson title. It MUST contain EVERY objective: one section per objective, in the same order and with no objective left out or merged (heading "h" = the key idea of that objective, "p" = 3-6 short lines separated by \\n, with definitions/explanations/examples/formulas that fully let the learner achieve that objective), then a final section with heading "Summary". Use the same terms as the plan; it must be consistent with it and answer the evaluation items. Length follows the number of objectives (about 80-120 words per objective).
 ${src ? `\nLESSON TEXT:\n"""\n${src}\n"""\n` : ""}
 Return ONLY JSON (no code fences): {"introduction":"","objectives":[""],"methods":"","aids":"","evaluation":[""],"note":[{"h":"","p":""}]}`;
-    const plan = await askJson(prompt, 5000, "lesson-plan");
-    plan.objectives = (plan.objectives || []).slice(0, 6);
-    plan.evaluation = (plan.evaluation || []).slice(0, 8);
+    const plan = await askJson(prompt, 9000, "lesson-plan");
+    plan.objectives = (plan.objectives || []).slice(0, 15);
+    plan.evaluation = (plan.evaluation || []).slice(0, 20);
     const id = crypto.randomUUID();
     await pool.query(
       `INSERT INTO lesson_plans (id, teacher, subject, class_name, title, data) VALUES ($1,$2,$3,$4,$5,$6)`,
