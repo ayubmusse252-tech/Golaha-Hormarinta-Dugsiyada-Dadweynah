@@ -92,8 +92,9 @@
   .lp-v{padding:4px 8px;min-height:30px;line-height:1.45;}
   .lp-f .lp-h{border-top:1px solid #000;} .lp-f:first-child .lp-h{border-top:none;}
   .lp-ev{display:grid;grid-template-columns:1fr 1fr;gap:4px 14px;}
-  .lp-tm{display:grid;grid-template-columns:1fr 1fr;border:1px solid #000;border-top:none;}
-  .lp-tm>div{padding:6px 8px;} .lp-tm>div:first-child{border-right:1px solid #000;}
+  .lp-tt{width:100%;border-collapse:collapse;border:1px solid #000;border-top:none;}
+  .lp-tt th,.lp-tt td{border:1px solid #000;padding:4px 8px;text-align:left;}
+  .lp-tt th{background:#f1f1f1;} .lp-tt .c{text-align:center;width:90px;}
   .lp-note{border:1px solid #000;padding:10px 14px;line-height:1.55;min-height:420px;}
   .lp-nh2{text-align:center;font-weight:700;font-size:1rem;margin-bottom:8px;}
   .lp-nh{font-weight:700;margin-top:8px;} .lp-note p{margin:2px 0;}
@@ -200,14 +201,14 @@
     <div class="row3">
       <div><label>Time</label><input id="lpDur" value="40 min"></div>
       <div><label>Weekly</label><input id="lpWeekly" placeholder="5 periods"></div>
-      <div><label>Tirada objectives</label><input id="lpNObj" type="number" min="2" max="6" value="4"></div>
+      <div><label>Tirada objectives</label><input id="lpNObj" type="number" min="1" max="12" placeholder="Auto (raac buugga)"></div>
     </div>
     <label>Luqadda</label>
     <select id="lpLang">
       <option value="en" selected>English</option><option value="so">Soomaali</option>
       <option value="ar">العربية</option><option value="auto">Otomaatig — raac qoraalka</option>
     </select>
-    <label>Qoraalka casharka (ikhtiyaari — si note-ku ugu salaysnaado buugga)</label>
+    <label>Qoraalka casharka (ikhtiyaari — ku dar objectives-ka buugga si loo raaco)</label>
     <textarea id="lpText" placeholder="Ku dheji qoraalka casharka halkan..."></textarea>
     <button class="btn-primary" id="lpGen">⚡ Samee Lesson Plan + Note</button>
     <div class="status" id="lpStatus"></div>
@@ -637,6 +638,11 @@
       String(s.p||"").split("\n").filter(Boolean).map(x=>`<p>${esc(x)}</p>`).join("")).join("");
     const img = `<img class="lp-img" src="/letterhead.jpg" alt="">`;
     const rtl = m.lang === "ar" ? ' dir="rtl"' : "";
+    const tot = parseInt(String(m.duration||"").match(/\d+/), 10) || 40;
+    const w = [0.125, 0.075, 0.55, 0.25];
+    const mins = w.map(x=>Math.max(1, Math.round(tot*x)));
+    mins[2] += tot - mins.reduce((a,x)=>a+x,0);
+    const tm = ["Question of the last lesson","Attendance of students","Explanation","Evaluation of lesson and homework"].map((t,i)=>[t, mins[i]]);
     lpOut.innerHTML = `<div class="lp-page">${img}<div class="lp-title">LESSON PLAN 2026-2027</div>
       <div class="lp-grid"><div>
         <div class="lp-c"><b>TEACHER NAME:</b> ${esc(m.teacher)}</div>
@@ -650,8 +656,10 @@
         ${box("Unit",m.unit)}${box("Lesson",m.lesson)}${box("Time",m.duration)}${box("Lesson/Session",m.session)}
       </div></div>
       ${H("Time Management")}
-      <div class="lp-tm"><div><b>1. Question of the last lesson<br>2. Attendance of students<br>3. Explanation<br>4. Evaluation of lesson and homework</b></div>
-      <div><b>Weekly</b><div>${esc(m.weekly)}</div></div></div></div>
+      <table class="lp-tt"><tr><th class="c">No.</th><th>Stage / Activity</th><th class="c">Time (min)</th></tr>
+      ${tm.map((r,i)=>`<tr><td class="c">${i+1}</td><td>${r[0]}</td><td class="c">${r[1]}</td></tr>`).join("")}
+      <tr><td></td><td><b>Total</b></td><td class="c"><b>${tm.reduce((a,r)=>a+r[1],0)}</b></td></tr>
+      <tr><td></td><td><b>Weekly</b></td><td class="c">${esc(m.weekly)||"&nbsp;"}</td></tr></table></div>
       <div class="lp-page">${img}<div class="lp-title">LESSON NOTE</div>
         <div class="lp-note"${rtl}><div class="lp-nh2">${esc([m.unit,m.lesson].filter(Boolean).join(" — "))}</div>${note}</div></div>`;
     lpOut.contentEditable = "true";
