@@ -25,6 +25,13 @@ App samaynaya imtixaanaada dugsiga, oo ku dhisan Bloom's Taxonomy, ku salaysan b
 - Imtixaanada la sameeyay waa la keydiyaa (Postgres) — waxaad mar dambe ka furi kartaa "📚 Imtixaanadii Hore".
 - 🖨️ Daabac / Save PDF si aad u daabacdo ama u kaydiso.
 
+## 📚 Maktabadda Manhajka (cusub)
+
+Tab cusub oo **📚 Maktabadda** ah ayaa laga helaa bogga sare. Halkaas ka geli buug kasta (PDF), dooro **fasalka** (Form 1–4) iyo **maadada** (12-ka maaddo ee manhajka). Nidaamku wuxuu akhriyaa bog kasta — qoraalka ku jira si toos ah, bogagga sawirka ah (scanned) wuxuu ku OCR-garaynayaa Claude — wuxuuna ku keydiyaa Postgres (`ocr_pages` + `library_books`).
+
+- Haddii OCR-ku istaago ama khalad dhaco, mar kale geli isla faylka: boggagga hore loo dhammeeyay waa la ordayaa, kuwa hadhay oo keliya ayaa la akhriyaa.
+- **Lesson Plan** iyo **Imtixaan** labadaba waxay leeyihiin sanduuqa **📚 Ka qaado Maktabadda**: dooro buugga, geli bogagga (24-31) ama raadi cutubka/casharka, taabo "Soo qaado qoraalka" — OCR kale looma baahna.
+
 ## Local development
 
 ```
