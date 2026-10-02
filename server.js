@@ -39,6 +39,15 @@ async function initDb() {
     data JSONB NOT NULL DEFAULT '{}',
     created_at TIMESTAMPTZ DEFAULT now()
   )`);
+  // OCR cache: boggag kasta (buug + bog) mar keliya ayaa la akhriyaa, kadibna waa la keydiyaa.
+  await pool.query(`CREATE TABLE IF NOT EXISTS ocr_pages (
+    doc_hash TEXT NOT NULL,
+    page INT NOT NULL,
+    doc_name TEXT NOT NULL DEFAULT '',
+    text TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ DEFAULT now(),
+    PRIMARY KEY (doc_hash, page)
+  )`);
   console.log("✅ Database ready");
 }
 initDb().catch((e) => console.error("DB init error:", e));
@@ -149,28 +158,111 @@ function splitText(text, n) {
 
 const MAX_SOURCE_CHARS = 90000; // ~ xadka qoraalka la dirayo (si lacagta loo ilaaliyo)
 
-function batchPrompt({ kind, n, marksList, textSlice, subject, klass, diagrams, diagramTopics, part, parts }) {
+// ---------- Luqadda: la-socoshada luqadda casharka ----------
+const LANG_NAMES = { so: "Somali (Af-Soomaali)", en: "English", ar: "Arabic (العربية)" };
+
+const LABELS = {
+  so: {
+    mcqName: "QAYBTA 1-aad: Ikhtiyaar Sax ah",
+    mcqInstr: "Dooro jawaabta saxda ah ee su'aal kasta. Su'aal kastaa waxay leedahay dhibcaha ka horreeya.",
+    structName: "QAYBTA 2-aad: Su'aalo Qaab-dhismeed ah",
+    structInstr: "Ka jawaab dhammaan su'aalaha. Si buuxda u qor jawaabahaaga.",
+    defSubject: "Maadada", defClass: "Fasalka", defDuration: "2 saac", defSchool: "Imtixaanka Maadada",
+    titleTemplate: "Imtixaanka {subject} — {class}",
+    totalMarks: "Wadarta Dhibcaha", time: "Waqtiga", studentName: "Magaca Ardayga", klass: "Fasalka", date: "Taariikhda",
+    source: "Isha", marksWord: "dhibcood", answerKey: "🔑 Furaha Jawaabaha (macalinka kaliya)",
+    pageWord: "Bogga", unnamed: "Cashar aan magac lahayn", lessonWord: "Cashar",
+    bloom: { Remember: "Xusuusnaan", Understand: "Fahamka", Apply: "Dabaqid", Analyze: "Falanqayn", Evaluate: "Qiimeyn", Create: "Abuur" },
+  },
+  en: {
+    mcqName: "SECTION A: Multiple Choice",
+    mcqInstr: "Choose the correct answer for each question. The marks for each question are shown in brackets.",
+    structName: "SECTION B: Structured Questions",
+    structInstr: "Answer all questions. Write your answers in full.",
+    defSubject: "Subject", defClass: "Class", defDuration: "2 hours", defSchool: "Subject Examination",
+    titleTemplate: "{subject} Examination — {class}",
+    totalMarks: "Total Marks", time: "Time", studentName: "Student's Name", klass: "Class", date: "Date",
+    source: "Source", marksWord: "marks", answerKey: "🔑 Answer Key (teacher only)",
+    pageWord: "Page", unnamed: "Untitled lesson", lessonWord: "Lesson",
+    bloom: { Remember: "Remember", Understand: "Understand", Apply: "Apply", Analyze: "Analyze", Evaluate: "Evaluate", Create: "Create" },
+  },
+  ar: {
+    mcqName: "القسم الأول: الاختيار من متعدد",
+    mcqInstr: "اختر الإجابة الصحيحة لكل سؤال. درجة كل سؤال مكتوبة بين قوسين.",
+    structName: "القسم الثاني: الأسئلة المقالية",
+    structInstr: "أجب عن جميع الأسئلة. اكتب إجاباتك كاملة.",
+    defSubject: "المادة", defClass: "الصف", defDuration: "ساعتان", defSchool: "امتحان المادة",
+    titleTemplate: "امتحان {subject} — {class}",
+    totalMarks: "المجموع الكلي للدرجات", time: "الزمن", studentName: "اسم الطالب", klass: "الصف", date: "التاريخ",
+    source: "المصدر", marksWord: "درجة", answerKey: "🔑 مفتاح الإجابات (للمعلم فقط)",
+    pageWord: "صفحة", unnamed: "درس بدون عنوان", lessonWord: "درس",
+    bloom: { Remember: "التذكر", Understand: "الفهم", Apply: "التطبيق", Analyze: "التحليل", Evaluate: "التقييم", Create: "الإبداع" },
+  },
+};
+
+const STOP_EN = new Set("the and of is are that with for this which by as from be an it can has have was were or not its their these those when where what how because into also than then there each such".split(" "));
+const STOP_SO = new Set("waa oo iyo ee ka ku uu ay waxa waxaa waxay ah sida kala kuwa loo aad ugu jiray leh ayaa ayuu lagu markii haddii laakiin sidoo kale dhammaan kasta isku kuwaas halka maxay yihiin yahay oo ayaa soo sii lahaa karo ama sababtoo".split(" "));
+
+// Waxay u eegtaa qoraalka: Carabi (far), Soomaali, ama Ingiriisi.
+function detectLang(text) {
+  const sample = String(text || "").slice(0, 30000);
+  const letters = (sample.match(/[A-Za-z\u0600-\u06FF]/g) || []).length;
+  const arabic = (sample.match(/[\u0600-\u06FF]/g) || []).length;
+  if (letters && arabic / letters > 0.4) return "ar";
+  const words = sample.toLowerCase().match(/[a-z']+/g) || [];
+  let en = 0, so = 0;
+  for (const w of words) {
+    if (STOP_EN.has(w)) en++;
+    if (STOP_SO.has(w)) so++;
+  }
+  if (!en && !so) return "so";
+  return so > en ? "so" : "en";
+}
+
+// Tirada su'aalaha otomaatig: waxay ku salaysan tahay dherer qoraalka iyo wadarta dhibcaha.
+function autoCounts({ chars, total, givenM, givenS, needM, needS }) {
+  const N = Math.min(36, Math.max(8, Math.round(chars / 1800)));
+  const autoM = Math.round(N * 0.6);
+  const autoS = N - autoM;
+  let m = needM ? autoM : givenM;
+  let s = needS ? autoS : givenS;
+  if (needM) {
+    if (s === 0) m = Math.min(60, Math.max(N, Math.min(total, 20)));
+    else m = Math.min(m, Math.max(1, Math.round(total * 0.4))); // MCQ kasta ugu yaraan 1 dhibic
+  }
+  if (needS) {
+    s = Math.max(s, Math.ceil(Math.max(0, total - m) / 15)); // qaab-dhismeed kasta ≤ ~15 dhibcood
+    s = Math.min(30, s);
+  }
+  return { m: Math.min(60, m), s: Math.min(30, s) };
+}
+
+function batchPrompt({ kind, n, marksList, textSlice, subject, klass, diagrams, diagramTopics, part, parts, langName, forced }) {
   const bloom = kind === "mcq"
-    ? "Xusuusnaan, Fahamka, Dabaqid (heerarka hoose iyo dhexe)"
-    : "Dabaqid, Falanqayn, Isku-dar/Abuur, Qiimeyn (heerarka sare); isku dar su'aalo gaagaaban iyo kuwo dhaadheer";
+    ? "Remember, Understand, Apply (lower and middle levels)"
+    : "Apply, Analyze, Evaluate, Create (higher levels); mix short and long questions";
   const diag = diagrams > 0
-    ? `Waa INUU ku jiraa SI SAX AH ${diagrams} su'aal oo leh sawir \"svg\" (SVG fudud oo cad: <svg viewBox=\"0 0 300 200\" xmlns=\"http://www.w3.org/2000/svg\">...</svg>, khadad iyo xarfo kooban, sida imtixaanada Qaranka: jaantus, shax, geometri, wareegga koronto, iwm). Su'aalaha kale svg waa null.${diagramTopics ? " Mawduucyada la doorbidayo: " + diagramTopics + "." : ""}`
-    : `Dhammaan \"svg\" waa null.`;
+    ? `EXACTLY ${diagrams} question(s) must include an "svg" diagram (simple, clear SVG: <svg viewBox="0 0 300 200" xmlns="http://www.w3.org/2000/svg">...</svg>, lines and short labels written in ${langName}; national-exam style: graph, diagram, geometry, circuit, etc.). All other questions have "svg": null.${diagramTopics ? " Preferred diagram topics: " + diagramTopics + "." : ""}`
+    : `All "svg" values must be null.`;
+  const langRule = forced
+    ? `LANGUAGE (critical): Write EVERYTHING (question text, options, answers, diagram labels) in ${langName}, even if the lesson text is in another language.`
+    : `LANGUAGE (critical): The lesson text below is written in ${langName}. Write EVERYTHING (question text, options, answers, diagram labels) in ${langName}, exactly the language of the lesson. Do NOT translate into any other language. Keep technical terms as they appear in the lesson.`;
   const shape = kind === "mcq"
-    ? `{"questions":[{"text":"...","options":["A) ...","B) ...","C) ...","D) ..."],"answer":"B) ...","bloom":"Xusuusnaan","svg":null}]}`
-    : `{"questions":[{"text":"... (ha ku dar qeybo a), b), c) haddii ay habboon tahay)","answer":"Jawaab qaab-dhismeed oo kooban + qodobbada dhibcaha","bloom":"Falanqayn","svg":null}]}`;
-  const marksLine = kind === "struct" ? `\nDhibcaha su'aal kasta (si isku xigta): ${marksList.join(", ")}. Su'aalaha dhibcahoodu sarreeyo waa inay noqdaan kuwo ka dhaadheer.` : "";
-  return `Waxaad tahay khabiir diyaarinaya imtixaanada heer-qaran ee Soomaaliya (qaabka Wasaaradda Waxbarashada / Qaranka). Samee ${n} su'aalood oo ${kind === "mcq" ? "ikhtiyaar sax ah (MCQ, 4 doorasho A-D, hal jawaab oo sax ah, doorashooyinka khaldan ha noqdaan kuwo macquul ah)" : "qaab-dhismeed ah"} oo ku saabsan ${subject} (${klass}).
-Heerarka Bloom: ${bloom}.${marksLine}
-Su'aal kasta waa inay ku salaysan tahay KALIYA qoraalka hoose, oo ha is-ku celin. Qoraalku waa qaybta ${part}/${parts} ee casharrada; ka dhig su'aalaha kuwo si fiican u daboola qaybtan.
+    ? `{"questions":[{"text":"...","options":["A) ...","B) ...","C) ...","D) ..."],"answer":"B) ...","bloom":"Remember","svg":null}]}`
+    : `{"questions":[{"text":"... (add parts a), b), c) when appropriate)","answer":"Short model answer + marking points","bloom":"Analyze","svg":null}]}`;
+  const marksLine = kind === "struct" ? `\nMarks per question (in order): ${marksList.join(", ")}. Questions with more marks must be longer / more demanding.` : "";
+  return `You are an expert exam writer for national-standard school exams in Somalia (Ministry of Education / National exam style). Write ${n} ${kind === "mcq" ? "multiple-choice questions (4 options A-D, exactly one correct answer, plausible distractors)" : "structured questions"} about ${subject} (${klass}).
+Bloom's levels: ${bloom}.${marksLine}
+${langRule}
+Every question must be based ONLY on the lesson text below and must not repeat each other. The text is part ${part}/${parts} of the lessons; make the questions cover this part well.
 ${diag}
 
-QORAALKA:
+LESSON TEXT:
 """
 ${textSlice}
 """
 
-Soo celi JSON KALIYA (faallo la'aan, code-fence la'aan), Soomaali fasiix ah, tirada su'aalaha waa inay noqotaa ${n}:
+Return ONLY JSON (no commentary, no code fences). The number of questions must be ${n}. The "bloom" field must always be one of these English keys: Remember, Understand, Apply, Analyze, Evaluate, Create (it is translated later). Format:
 ${shape}`;
 }
 
@@ -178,42 +270,68 @@ ${shape}`;
 app.post("/api/generate-exam", requireAdmin, async (req, res) => {
   try {
     const {
-      subject = "Maadada",
-      klass = "Fasalka",
-      mcqN = 10,
-      structN = 8,
+      subject = "",
+      klass = "",
+      mcqN = null,
+      structN = null,
       totalMarks = 100,
-      duration = "2 saac",
+      duration = "",
       school = "",
       diagramCount = 0,
       diagramTopics = "",
+      lang = "auto",
       lessons = [],
     } = req.body || {};
 
-    const mN = Math.max(0, Math.min(60, parseInt(mcqN, 10) || 0));
-    const sN = Math.max(0, Math.min(30, parseInt(structN, 10) || 0));
+    const isBlank = (v) => v === null || v === undefined || String(v).trim() === "" || isNaN(parseInt(v, 10));
+    const needM = isBlank(mcqN);
+    const needS = isBlank(structN);
+    const givenM = needM ? 0 : Math.max(0, Math.min(60, parseInt(mcqN, 10)));
+    const givenS = needS ? 0 : Math.max(0, Math.min(30, parseInt(structN, 10)));
     const total = Math.max(1, parseInt(totalMarks, 10) || 100);
-    if (mN + sN === 0) return res.status(400).json({ error: "questions required" });
+    if (!needM && !needS && givenM + givenS === 0) return res.status(400).json({ error: "questions required" });
     const dCount = Math.max(0, Math.min(10, parseInt(diagramCount, 10) || 0));
     const dTopics = String(diagramTopics || "").trim();
 
     const cleanLessons = (Array.isArray(lessons) ? lessons : []).filter((l) => l && l.text && l.text.trim());
     if (!cleanLessons.length) return res.status(400).json({ error: "lessons required" });
 
+    // Luqadda imtixaanka: haddii la doorto waa la raacayaa, haddii kale waxay raacaysaa luqadda casharka.
+    const forced = LANG_NAMES[lang] ? lang : null;
+    const rawText = cleanLessons.map((l) => l.text).join("\n\n");
+    const examLang = forced || detectLang(rawText);
+    const L = LABELS[examLang];
+    const langName = LANG_NAMES[examLang];
+
+    const subjectF = String(subject).trim() || L.defSubject;
+    const klassF = String(klass).trim() || L.defClass;
+    const durationF = String(duration).trim() || L.defDuration;
+
     const sourcesLabel = cleanLessons
-      .map((l) => [l.chapter, l.pages ? "Bogga " + l.pages : ""].filter(Boolean).join(" — ") || "Cashar aan magac lahayn")
+      .map((l) => [l.chapter, l.pages ? L.pageWord + " " + l.pages : ""].filter(Boolean).join(" — ") || L.unnamed)
       .join(" | ");
 
     let allText = cleanLessons
       .map((l, i) => {
-        const tag = [l.chapter || "Cashar " + (i + 1), l.pages ? "Bogga " + l.pages : ""].filter(Boolean).join(" — ");
+        const tag = [l.chapter || L.lessonWord + " " + (i + 1), l.pages ? L.pageWord + " " + l.pages : ""].filter(Boolean).join(" — ");
         return `### ${tag}\n${l.text.trim()}`;
       })
       .join("\n\n");
     if (allText.length > MAX_SOURCE_CHARS) allText = allText.slice(0, MAX_SOURCE_CHARS);
 
-    // Dhibcaha: MCQ ~40% (ugu badnaan 1 dhibic su'aal kasta haddii suurtagal ah), inta kale qaab-dhismeed
-    const mcqTotal = mN === 0 ? 0 : sN === 0 ? total : Math.min(mN, Math.round(total * 0.4)) || 1;
+    // Tirada su'aalaha: haddii aan la qorin, si otomaatig ah ayaa loo doortaa.
+    const { m: mN, s: sN } = autoCounts({ chars: allText.length, total, givenM, givenS, needM, needS });
+    if (mN + sN === 0) return res.status(400).json({ error: "questions required" });
+
+    // Dhibcaha: MCQ ~40% (su'aal kasta ugu yaraan 1 dhibic), inta kale qaab-dhismeed
+    let mcqTotal = 0;
+    if (mN === 0) mcqTotal = 0;
+    else if (sN === 0) mcqTotal = total;
+    else {
+      mcqTotal = Math.min(mN, Math.round(total * 0.4));
+      mcqTotal = Math.max(mcqTotal, Math.min(mN, total - sN)); // ha jirin su'aal 0 dhibic ah
+      mcqTotal = Math.max(1, mcqTotal);
+    }
     const structTotal = total - mcqTotal;
     const mcqMarks = distribute(mcqTotal, mN);
     const structMarks = distribute(structTotal, sN);
@@ -228,18 +346,18 @@ app.post("/api/generate-exam", requireAdmin, async (req, res) => {
 
     const jobs = [];
     let offset = 0;
+    const mcqSlices = splitText(allText, mcqCounts.length);
     mcqCounts.forEach((n, i) => {
-      const slice = splitText(allText, mcqCounts.length)[i];
       const d = structCounts.length ? 0 : diagAlloc[i];
-      jobs.push({ kind: "mcq", marks: mcqMarks.slice(offset, offset + n), p: batchPrompt({ kind: "mcq", n, marksList: [], textSlice: slice, subject, klass, diagrams: d, diagramTopics: dTopics, part: i + 1, parts: mcqCounts.length }), max: d ? 6000 : 4000, label: "MCQ " + (i + 1) });
+      jobs.push({ kind: "mcq", marks: mcqMarks.slice(offset, offset + n), p: batchPrompt({ kind: "mcq", n, marksList: [], textSlice: mcqSlices[i], subject: subjectF, klass: klassF, diagrams: d, diagramTopics: dTopics, part: i + 1, parts: mcqCounts.length, langName, forced: !!forced }), max: d ? 6000 : 4000, label: "MCQ " + (i + 1) });
       offset += n;
     });
     offset = 0;
+    const structSlices = splitText(allText, structCounts.length);
     structCounts.forEach((n, i) => {
-      const slice = splitText(allText, structCounts.length)[i];
       const ml = structMarks.slice(offset, offset + n);
       const d = diagAlloc[i];
-      jobs.push({ kind: "struct", marks: ml, p: batchPrompt({ kind: "struct", n, marksList: ml, textSlice: slice, subject, klass, diagrams: d, diagramTopics: dTopics, part: i + 1, parts: structCounts.length }), max: d ? 7000 : 5000, label: "Qaab-dhismeed " + (i + 1) });
+      jobs.push({ kind: "struct", marks: ml, p: batchPrompt({ kind: "struct", n, marksList: ml, textSlice: structSlices[i], subject: subjectF, klass: klassF, diagrams: d, diagramTopics: dTopics, part: i + 1, parts: structCounts.length, langName, forced: !!forced }), max: d ? 7000 : 5000, label: "Struct " + (i + 1) });
       offset += n;
     });
 
@@ -253,8 +371,8 @@ app.post("/api/generate-exam", requireAdmin, async (req, res) => {
       });
       return { name, instructions, qs };
     };
-    const s1 = mkSection("mcq", "QAYBTA 1-aad: Ikhtiyaar Sax ah", "Dooro jawaabta saxda ah ee su'aal kasta. Su'aal kastaa waxay leedahay dhibcaha ka horreeya.");
-    const s2 = mkSection("struct", "QAYBTA 2-aad: Su'aalo Qaab-dhismeed ah", "Ka jawaab dhammaan su'aalaha. Si buuxda u qor jawaabahaaga.");
+    const s1 = mkSection("mcq", L.mcqName, L.mcqInstr);
+    const s2 = mkSection("struct", L.structName, L.structInstr);
 
     let n = 1;
     const answerKey = [];
@@ -271,12 +389,13 @@ app.post("/api/generate-exam", requireAdmin, async (req, res) => {
         }),
       }));
     const data = { sections, answerKey };
-    const meta = { subject, klass, totalMarks: total, duration, school, sourcesLabel };
+    const counts = { mcq: s1.qs.length, struct: s2.qs.length, autoMcq: needM, autoStruct: needS };
+    const meta = { subject: subjectF, klass: klassF, totalMarks: total, duration: durationF, school, sourcesLabel, lang: examLang, labels: L, counts };
 
     const id = crypto.randomUUID();
     await pool.query(
       `INSERT INTO exams (id, subject, class_name, total_marks, duration, sources, data) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-      [id, subject, klass, total, duration, sourcesLabel, JSON.stringify({ ...data, meta })]
+      [id, subjectF, klassF, total, durationF, sourcesLabel, JSON.stringify({ ...data, meta })]
     );
 
     res.json({ id, exam: data, meta });
@@ -286,32 +405,90 @@ app.post("/api/generate-exam", requireAdmin, async (req, res) => {
   }
 });
 
-// ---------- OCR a batch of scanned page images (for scanned PDFs) ----------
+// ---------- OCR cache (page kasta mar keliya ayaa la akhriyaa) ----------
+// Soo hel boggagga hore loo akhriyay buug (docHash = SHA-256 ee faylka).
+app.post("/api/ocr-cache", requireAdmin, async (req, res) => {
+  try {
+    const { docHash = "", pages = [] } = req.body || {};
+    const nums = (Array.isArray(pages) ? pages : []).map((n) => parseInt(n, 10)).filter((n) => n >= 1);
+    if (!docHash || !nums.length) return res.json({ pages: {} });
+    const { rows } = await pool.query(
+      "SELECT page, text FROM ocr_pages WHERE doc_hash=$1 AND page = ANY($2::int[])",
+      [String(docHash), nums]
+    );
+    const out = {};
+    rows.forEach((r) => { out[r.page] = r.text; });
+    res.json({ pages: out });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message || "server error" });
+  }
+});
+
+async function ocrOnePage(b64, mediaType) {
+  const content = [
+    {
+      type: "text",
+      text:
+        "Transcribe the text on this textbook page image EXACTLY as written. " +
+        "Keep the original language (Somali, English or Arabic) — do NOT translate, summarise or add commentary. " +
+        "Keep formulas, units, numbering and headings; write tables as plain text rows. " +
+        "For a picture/diagram, write only a short bracketed note like [Diagram: ...] in the page's own language. " +
+        "Output the transcription only. If the page has no text, output nothing.",
+    },
+    { type: "image", source: { type: "base64", media_type: mediaType, data: b64 } },
+  ];
+  const r = await callClaude({ messages: [{ role: "user", content }], maxTokens: 4096 });
+  return (r.text || "").trim();
+}
+
+// OCR boggag scan ah. Boggagga hore loo akhriyay waa laga qaadayaa keydka, kuwa cusub oo keliya ayaa la akhriyaa.
 app.post("/api/ocr-pages", requireAdmin, async (req, res) => {
   try {
-    const { images = [], mediaType = "image/png" } = req.body || {};
-    if (!Array.isArray(images) || !images.length) return res.status(400).json({ error: "images required" });
-    if (images.length > 8) return res.status(400).json({ error: "too many images in one call (max 8)" });
+    const { docHash = "", docName = "", pages = [], mediaType = "image/png" } = req.body || {};
+    if (!Array.isArray(pages) || !pages.length) return res.status(400).json({ error: "pages required" });
+    if (pages.length > 8) return res.status(400).json({ error: "too many pages in one call (max 8)" });
+    const items = pages
+      .map((p) => ({ num: parseInt(p && p.num, 10), image: p && p.image }))
+      .filter((p) => p.num >= 1);
+    if (!items.length) return res.status(400).json({ error: "pages required" });
 
-    const content = [
-      {
-        type: "text",
-        text:
-          "Akhri sawirradan (boggag ka mid ah buug dugsi ah, luuqadu waa Soomaali/Carabi/Ingiriisi). " +
-          "Ku qor qoraalka SAX U AH ee ku jira sawirrada, si taxane ah (bogga 1, bogga 2, iwm), " +
-          "adigoo aan wax ka beddelin, aan soo koobin, aan faallo ku darin. Jawaabta waa qoraalka kaliya.",
-      },
-      ...images.map((b64) => ({
-        type: "image",
-        source: { type: "base64", media_type: mediaType, data: b64 },
-      })),
-    ];
+    const out = {};
+    const fromCache = [];
+    const fresh = [];
 
-    const r = await callClaude({
-      messages: [{ role: "user", content }],
-      maxTokens: 4096,
-    });
-    res.json({ text: r.text });
+    let cached = {};
+    if (docHash) {
+      const { rows } = await pool.query(
+        "SELECT page, text FROM ocr_pages WHERE doc_hash=$1 AND page = ANY($2::int[])",
+        [String(docHash), items.map((p) => p.num)]
+      );
+      rows.forEach((r) => { cached[r.page] = r.text; });
+    }
+
+    const todo = [];
+    for (const p of items) {
+      if (cached[p.num] !== undefined) { out[p.num] = cached[p.num]; fromCache.push(p.num); }
+      else if (p.image) todo.push(p);
+    }
+
+    await Promise.all(
+      todo.map(async (p) => {
+        const text = await ocrOnePage(p.image, mediaType);
+        out[p.num] = text;
+        fresh.push(p.num);
+        // Keydi kaliya haddii qoraal la helay (bog madhan dib ayaa loo isku dayi karaa)
+        if (docHash && text) {
+          await pool.query(
+            `INSERT INTO ocr_pages (doc_hash, page, doc_name, text) VALUES ($1,$2,$3,$4)
+             ON CONFLICT (doc_hash, page) DO UPDATE SET text=EXCLUDED.text, doc_name=EXCLUDED.doc_name, created_at=now()`,
+            [String(docHash), p.num, String(docName).slice(0, 200), text]
+          );
+        }
+      })
+    );
+
+    res.json({ pages: out, fromCache, fresh });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: e.message || "server error" });
