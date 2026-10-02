@@ -119,6 +119,18 @@
     #examOutput{border:none;padding:0;}
     .bloom-tag{display:none;}
   }
+
+  .lib-pick{border:1px dashed var(--border);border-radius:10px;padding:8px 10px;margin:8px 0;background:var(--bg);}
+  .lib-pick summary{cursor:pointer;font-size:.82rem;font-weight:700;color:var(--accent);}
+  .lib-pick .lib-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;}
+  .lib-pick .lib-chips button{padding:4px 9px;font-size:.72rem;background:var(--surface2);border:1px solid var(--border);color:var(--text);}
+  .lib-pick button.lib-act{padding:9px 12px;font-size:.82rem;}
+  .lib-cls{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 10px;}
+  .lib-cls button{padding:7px 12px;font-size:.8rem;background:var(--surface2);border:1px solid var(--border);color:var(--text);}
+  .lib-cls button.on{background:var(--accent);color:#fff;border-color:var(--accent);}
+  .lib-subj{font-weight:700;font-size:.85rem;margin:12px 0 2px;color:var(--accent2);}
+  .bar{height:7px;background:var(--surface2);border-radius:5px;overflow:hidden;margin-top:6px;}
+  .bar > i{display:block;height:100%;background:var(--good);width:0;transition:width .3s;}
 </style>
 </head>
 <body>
@@ -138,6 +150,7 @@
   <div class="tabs no-print">
     <button id="tabExam" class="on" type="button">📝 Imtixaan</button>
     <button id="tabLp" type="button">📘 Lesson Plan + Note</button>
+    <button id="tabLib" type="button">📚 Maktabadda</button>
   </div>
 <div id="examTab">
   <div class="card no-print">
@@ -191,6 +204,33 @@
     <button class="btn-ghost" id="newBtn">🔄 Imtixaan Cusub</button>
   </div>
 </div><!-- /examTab -->
+<div id="libTab" class="hidden">
+  <div class="card no-print">
+    <h2>⬆️ Buug cusub geli</h2>
+    <div class="hint">Buug kasta mar keliya ayaa la geliyaa. Nidaamku wuxuu akhriyaa bog kasta (qoraalka ku jira ama OCR haddii sawir yahay), wuxuuna ku keydiyaa Postgres. Kadib lesson plan iyo imtixaan marka aad sameyneyso waad ka qaadan kartaa halkan — OCR dambe looma baahna. Haddii isla buugga mar kale la geliyo, boggagga hore loo dhammeeyay waa la ordayaa.</div>
+    <div class="row">
+      <div><label>Fasalka</label>
+        <select id="libClass">
+          <option>Form 1</option><option>Form 2</option><option>Form 3</option><option>Form 4</option>
+        </select></div>
+      <div><label>Maadada</label>
+        <input id="libSubject" list="libSubjectList" placeholder="tusaale: Mathematics">
+        <datalist id="libSubjectList"></datalist></div>
+    </div>
+    <label>Magaca buugga (ikhtiyaari)</label>
+    <input id="libTitle" placeholder="tusaale: Mathematics Form 1 — Student's Book">
+    <label>Faylka buugga (PDF)</label>
+    <input type="file" id="libFile" accept=".pdf">
+    <button class="btn-primary" id="libUpload">⬆️ Soo geli oo keydi OCR-ka</button>
+    <div class="bar"><i id="libBar"></i></div>
+    <div class="status" id="libStatus"></div>
+  </div>
+  <div class="card no-print">
+    <h2>📚 Buugaagta la keydiyay</h2>
+    <div class="lib-cls" id="libClsTabs"></div>
+    <div id="libList" class="status">Waa la soo dejinayaa...</div>
+  </div>
+</div>
 <div id="lpTab" class="hidden">
   <div class="card no-print">
     <h2>📚 Lesson Plan-yadii Hore</h2>
@@ -222,6 +262,20 @@
       <option value="en" selected>English</option><option value="so">Soomaali</option>
       <option value="ar">العربية</option><option value="auto">Otomaatig — raac qoraalka</option>
     </select>
+    <details class="lib-pick" data-pick="lp" open>
+      <summary>📚 Ka qaado Maktabadda</summary>
+      <select class="lib-book"></select>
+      <div class="row">
+        <input class="lib-pages" placeholder="Bogagga (tusaale: 24-31)">
+        <input class="lib-q" placeholder="Ama raadi cutub/cashar">
+      </div>
+      <div class="row" style="margin-top:8px;">
+        <button type="button" class="btn-ghost lib-act lib-search">🔎 Raadi</button>
+        <button type="button" class="btn-ghost lib-act lib-fill">⬇️ Soo qaado qoraalka</button>
+      </div>
+      <div class="lib-chips"></div>
+      <div class="status lib-status"></div>
+    </details>
     <label>Qoraalka casharka (ikhtiyaari — ku dar objectives-ka buugga si loo raaco)</label>
     <textarea id="lpText" placeholder="Ku dheji qoraalka casharka halkan..."></textarea>
     <button class="btn-primary" id="lpGen">⚡ Samee Lesson Plan + Note</button>
@@ -268,7 +322,7 @@
     if (!pw){ showLogin(); return; }
     try{
       const j = await fetch("/api/login", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({password:pw}) }).then(r=>r.json());
-      if (j.ok){ showApp(); loadSavedExams(); }
+      if (j.ok){ showApp(); loadSavedExams(); libReload(); }
       else showLogin();
     } catch(e){ showLogin("Khalad xidhiidh server ah."); }
   }
@@ -278,7 +332,7 @@
     try{
       const res = await fetch("/api/login", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({password:pw}) });
       const j = await res.json();
-      if (j.ok){ localStorage.setItem(PW_KEY, pw); showApp(); loadSavedExams(); }
+      if (j.ok){ localStorage.setItem(PW_KEY, pw); showApp(); loadSavedExams(); libReload(); }
       else { $("loginErr").textContent = "Sirta waa qalad."; $("loginErr").classList.remove("hidden"); }
     } catch(e){ $("loginErr").textContent = "Khalad server ah."; $("loginErr").classList.remove("hidden"); }
   });
@@ -315,6 +369,177 @@
       renderExam(data, data.meta || { subject: row.subject, klass: row.class_name, totalMarks: row.total_marks, duration: row.duration, sourcesLabel: row.sources });
       window.scrollTo({top: document.getElementById("examOutput").offsetTop - 10, behavior:"smooth"});
     } catch(e){ alert("Khalad: " + e.message); }
+  }
+
+  // ---------- Maktabadda Manhajka ----------
+  const DEFAULT_SUBJECTS = ["Somali","Arabic","English","Islamic Studies","Mathematics","Physics","Chemistry","Biology","History","Geography","Business","Computer / ICT"];
+  let libBooks = [];
+  let libClassFilter = "";
+  function libFillSubjects(){
+    const names = Array.from(new Set(DEFAULT_SUBJECTS.concat(libBooks.map(b=>b.subject)))).sort();
+    $("libSubjectList").innerHTML = names.map(n=>`<option value="${esc(n)}">`).join("");
+  }
+  function libBookLabel(b){ return `${b.class_name} — ${b.subject} — ${b.title}` + (b.pages_done < b.num_pages ? ` (${b.pages_done}/${b.num_pages} bog)` : ""); }
+  function libRefreshPickers(){
+    document.querySelectorAll(".lib-pick .lib-book").forEach(sel=>{
+      const cur = sel.value;
+      sel.innerHTML = `<option value="">— Dooro buugga —</option>` +
+        libBooks.map(b=>`<option value="${b.id}">${esc(libBookLabel(b))}</option>`).join("");
+      if (cur) sel.value = cur;
+    });
+  }
+  async function libReload(){
+    try{ libBooks = await api("/api/library"); } catch(e){ libBooks = []; }
+    libFillSubjects(); libRefreshPickers();
+  }
+  async function libLoad(){
+    await libReload();
+    libRenderList();
+  }
+  function libRenderList(){
+    const el = $("libList");
+    const classes = Array.from(new Set(libBooks.map(b=>b.class_name))).sort();
+    if (!libBooks.length){ el.textContent = "Wali buug lama geliyin."; $("libClsTabs").innerHTML = ""; return; }
+    if (!libClassFilter || !classes.includes(libClassFilter)) libClassFilter = classes[0];
+    $("libClsTabs").innerHTML = classes.map(c=>`<button type="button" data-c="${esc(c)}" class="${c===libClassFilter?"on":""}">${esc(c)} (${libBooks.filter(b=>b.class_name===c).length})</button>`).join("");
+    $("libClsTabs").querySelectorAll("button").forEach(b=>b.addEventListener("click", ()=>{ libClassFilter = b.dataset.c; libRenderList(); }));
+    const bySubj = {};
+    libBooks.filter(b=>b.class_name===libClassFilter).forEach(b=>{ (bySubj[b.subject] = bySubj[b.subject] || []).push(b); });
+    el.innerHTML = Object.keys(bySubj).sort().map(sj=>`<div class="lib-subj">${esc(sj)}</div>` + bySubj[sj].map(b=>{
+      const done = b.pages_done >= b.num_pages && b.num_pages > 0;
+      return `<div class="saved-item"><div><b>${esc(b.title)}</b>
+        <div class="meta">${done ? "✅" : "⚠️"} ${b.pages_done}/${b.num_pages} bog la keydiyay${done ? "" : " — mar kale geli isla faylka si uu u dhammaado"}</div></div>
+        <div class="sv-btns"><button class="btn-ghost" data-del="${b.id}" style="color:var(--bad);">🗑️</button></div></div>`;
+    }).join("")).join("");
+    el.querySelectorAll("[data-del]").forEach(b=>b.addEventListener("click", async ()=>{
+      if (!confirm("Ma hubtaa inaad tirtirto buuggan iyo OCR-kiisa la keydiyay?")) return;
+      await api("/api/library/"+b.dataset.del, {method:"DELETE"});
+      libLoad();
+    }));
+  }
+  async function libUpload(){
+    const file = $("libFile").files[0];
+    const cls = $("libClass").value, subj = $("libSubject").value.trim();
+    const title = $("libTitle").value.trim() || (file ? file.name.replace(/\.pdf$/i,"") : "");
+    const st = $("libStatus"), bar = $("libBar"), btn = $("libUpload");
+    if (!file){ st.textContent = "⚠️ Fadlan dooro faylka PDF."; return; }
+    if (!/\.pdf$/i.test(file.name)){ st.textContent = "⚠️ Maktabaddu waxay aqbashaa PDF keliya."; return; }
+    if (!subj){ st.textContent = "⚠️ Fadlan geli maadada."; return; }
+    btn.disabled = true; bar.style.width = "0";
+    try{
+      st.textContent = "⏳ Buugga waa la akhrinayaa...";
+      await loadScript("https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js");
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+      const buf = await file.arrayBuffer();
+      const hash = await fileHash(file, buf);
+      const pdf = await window.pdfjsLib.getDocument({data: buf.slice(0)}).promise;
+      const total = pdf.numPages;
+      const reg = await api("/api/library", {method:"POST", body: JSON.stringify({ docHash: hash, className: cls, subject: subj, title, numPages: total })});
+      const done = new Set((await api("/api/library/"+reg.id+"/done")).pages);
+      const todo = [];
+      for (let i=1;i<=total;i++) if (!done.has(i)) todo.push(i);
+      let finished = done.size, failed = [];
+      const tick = (msg)=>{ bar.style.width = Math.round(finished/total*100)+"%"; st.textContent = msg; };
+      tick(`⏳ ${finished}/${total} bog ayaa horay u diyaar ahaa; ${todo.length} bog ayaa hadhay...`);
+      // 1) Kala saar: bogag qoraal leh (si toos ah) vs bogag sawir ah (OCR)
+      let textBatch = {}, textCount = 0, ocrQueue = [];
+      async function flushText(){
+        if (!textCount) return;
+        await api("/api/library/"+reg.id+"/store-pages", {method:"POST", body: JSON.stringify({pages:textBatch})});
+        finished += textCount; textBatch = {}; textCount = 0;
+        tick(`⏳ ${finished}/${total} bog la keydiyay...`);
+      }
+      for (const n of todo){
+        const page = await pdf.getPage(n);
+        const content = await page.getTextContent();
+        const t = content.items.map(it=>it.str).join(" ").replace(/\s+/g," ").trim();
+        if (t.length >= 40){ textBatch[n] = t; textCount++; if (textCount >= 25) await flushText(); }
+        else ocrQueue.push(n);
+      }
+      await flushText();
+      // 2) OCR bogagga sawirka ah (4 mar kasta; marka bog la dhammeeyo waa la keydiyaa)
+      const BATCH = 4;
+      for (let i=0;i<ocrQueue.length;i+=BATCH){
+        const nums = ocrQueue.slice(i,i+BATCH);
+        tick(`🔍 OCR: ${finished}/${total} bog — waa la akhrinayaa ${nums[0]}–${nums[nums.length-1]}...`);
+        const pages = [];
+        for (const n of nums){
+          const page = await pdf.getPage(n);
+          const viewport = page.getViewport({scale: 1.6});
+          const canvas = document.createElement("canvas");
+          canvas.width = viewport.width; canvas.height = viewport.height;
+          await page.render({canvasContext: canvas.getContext("2d"), viewport}).promise;
+          pages.push({ num:n, image: canvas.toDataURL("image/png").split(",")[1] });
+        }
+        let ok = false;
+        for (let attempt=0; attempt<2 && !ok; attempt++){
+          try{
+            const r = await api("/api/ocr-pages", {method:"POST", body: JSON.stringify({docHash: hash, docName: title, pages, mediaType:"image/png"})});
+            finished += nums.filter(n=>r.pages && r.pages[n]).length;
+            nums.forEach(n=>{ if (!(r.pages && r.pages[n])) failed.push(n); });
+            ok = true;
+          }catch(e){ if (attempt===1) failed.push(...nums); }
+        }
+        tick(`🔍 OCR: ${finished}/${total} bog la keydiyay...`);
+      }
+      const blanks = failed.length;
+      bar.style.width = Math.round(finished/total*100)+"%";
+      st.textContent = blanks
+        ? `⚠️ ${finished}/${total} bog ayaa la keydiyay. ${blanks} bog (kuwa madhan ama khalad) lama keydin: ${failed.slice(0,15).join(", ")}${blanks>15?"...":""}. Mar kale geli isla faylka si loogu celiyo.`
+        : `✅ Buugga waa dhammaaday — ${total} bog ayaa la keydiyay.`;
+      $("libFile").value = "";
+      await libLoad();
+    }catch(e){
+      st.textContent = "⚠️ Khalad: " + e.message + " (boggagga hore loo dhammeeyay waa la keydiyay; mar kale geli isla faylka si uu uga sii socdo.)";
+    } finally { btn.disabled = false; }
+  }
+  $("libUpload").addEventListener("click", libUpload);
+
+  // Picker: ka qaado qoraalka buug Maktabadda ah (lesson plan iyo imtixaan)
+  function initPicker(root, t){
+    const sel = root.querySelector(".lib-book"), st = root.querySelector(".lib-status"), chips = root.querySelector(".lib-chips");
+    const q = root.querySelector(".lib-q");
+    const pagesInput = () => (root.querySelector(".lib-pages") || t.pages());
+    const book = () => libBooks.find(b=>b.id===sel.value);
+    libRefreshPickers();
+    sel.addEventListener("change", ()=>{
+      const b = book(); chips.innerHTML = ""; st.textContent = "";
+      if (!b) return;
+      if (t.klass && t.klass() && !t.klass().value) t.klass().value = b.class_name;
+      if (t.subject && t.subject() && !t.subject().value) t.subject().value = b.subject;
+    });
+    root.querySelector(".lib-search").addEventListener("click", async ()=>{
+      const b = book(); if (!b){ st.textContent = "⚠️ Marka hore dooro buugga."; return; }
+      const term = q.value.trim(); if (term.length < 2){ st.textContent = "⚠️ Qor ugu yaraan 2 xaraf."; return; }
+      st.textContent = "⏳ Waa la raadinayaa...";
+      try{
+        const r = await api(`/api/library/${b.id}/search?q=${encodeURIComponent(term)}`);
+        chips.innerHTML = "";
+        if (!r.hits.length){ st.textContent = "Wax lagama helin buuggan."; return; }
+        st.textContent = `La helay ${r.hits.length} bog — guji lambarka si aad ugu darto bogagga:`;
+        r.hits.forEach(h=>{
+          const bt = document.createElement("button"); bt.type = "button"; bt.textContent = "p." + h.page; bt.title = h.snippet;
+          bt.addEventListener("click", ()=>{
+            const pi = pagesInput(); pi.value = pi.value.trim() ? pi.value.trim() + "," + h.page : String(h.page);
+          });
+          chips.appendChild(bt);
+        });
+      }catch(e){ st.textContent = "⚠️ " + e.message; }
+    });
+    root.querySelector(".lib-fill").addEventListener("click", async ()=>{
+      const b = book(); if (!b){ st.textContent = "⚠️ Marka hore dooro buugga."; return; }
+      const pg = pagesInput().value.trim();
+      st.textContent = "⏳ Waa la soo qaadayaa...";
+      try{
+        const r = await api(`/api/library/${b.id}/text?pages=${encodeURIComponent(pg)}`);
+        if (!r.text.trim()){ st.textContent = "⚠️ Bogagga la doortay qoraal looma keydin."; return; }
+        t.text().value = r.text;
+        if (root.dataset.pick === "exam" && t.pages() && pg) t.pages().value = pg;
+        if (t.klass && t.klass() && !t.klass().value) t.klass().value = b.class_name;
+        if (t.subject && t.subject() && !t.subject().value) t.subject().value = b.subject;
+        st.textContent = `✅ ${r.found} bog ayaa la geliyay` + (r.missing.length ? ` · ⚠️ bogagga aan la keydin: ${r.missing.join(", ")}` : "") + (r.truncated ? " · qoraalka waa la gaabiyay (xad)." : "") + (pg ? "" : " (buugga oo dhan, ilaa xadka)");
+      }catch(e){ st.textContent = "⚠️ " + e.message; }
+    });
   }
 
   // ---------- Lesson blocks (manual text, file upload, OCR for scanned PDFs) ----------
@@ -493,6 +718,17 @@
         <input class="l-chapter" placeholder="Magaca Cutubka/Casharka (tusaale: Cutubka 3)">
         <input class="l-pages" placeholder="Bogagga (tusaale: 24-31)">
       </div>
+      <details class="lib-pick" data-pick="exam">
+        <summary>📚 Ka qaado Maktabadda</summary>
+        <select class="lib-book"></select>
+        <input class="lib-q" placeholder="Raadi cutub/cashar (ikhtiyaari)" style="margin-top:8px;">
+        <div class="row" style="margin-top:8px;">
+          <button type="button" class="btn-ghost lib-act lib-search">🔎 Raadi</button>
+          <button type="button" class="btn-ghost lib-act lib-fill">⬇️ Soo qaado (bogagga kor ku qoran)</button>
+        </div>
+        <div class="lib-chips"></div>
+        <div class="status lib-status"></div>
+      </details>
       <div class="l-upload">
         <input type="file" class="l-file" accept=".pdf,.docx,.txt,.md">
         <span class="l-filestatus"></span>
@@ -511,6 +747,12 @@
       if (pdfPagesMap.has(id)) fillFromPdfPages(id, div);
     });
     div.querySelector(".l-ocr").addEventListener("click", ()=>runOcr(id, div));
+    initPicker(div.querySelector(".lib-pick"), {
+      pages: ()=>div.querySelector(".l-pages"),
+      text: ()=>div.querySelector(".l-text"),
+      subject: ()=>$("subject"), klass: ()=>$("klass"),
+      chapter: ()=>div.querySelector(".l-chapter")
+    });
   }
   addLesson();
   $("addLessonBtn").addEventListener("click", ()=>addLesson());
@@ -635,13 +877,23 @@
 
 
   // ---------- Lesson Plan + Lesson Note ----------
-  function showTab(lp){
-    $("examTab").classList.toggle("hidden", lp); $("lpTab").classList.toggle("hidden", !lp);
-    $("tabExam").classList.toggle("on", !lp); $("tabLp").classList.toggle("on", lp);
-    if (lp) lpLoadList();
+  function showTab(name){
+    $("examTab").classList.toggle("hidden", name!=="exam");
+    $("lpTab").classList.toggle("hidden", name!=="lp");
+    $("libTab").classList.toggle("hidden", name!=="lib");
+    $("tabExam").classList.toggle("on", name==="exam");
+    $("tabLp").classList.toggle("on", name==="lp");
+    $("tabLib").classList.toggle("on", name==="lib");
+    if (name==="lp") lpLoadList();
+    if (name==="lib") libLoad();
   }
-  $("tabExam").addEventListener("click", ()=>showTab(false));
-  $("tabLp").addEventListener("click", ()=>showTab(true));
+  $("tabExam").addEventListener("click", ()=>showTab("exam"));
+  $("tabLp").addEventListener("click", ()=>showTab("lp"));
+  $("tabLib").addEventListener("click", ()=>showTab("lib"));
+  initPicker(document.querySelector('.lib-pick[data-pick="lp"]'), {
+    pages: ()=>document.querySelector('.lib-pick[data-pick="lp"] .lib-pages'),
+    text: ()=>$("lpText"), subject: ()=>$("lpSubject"), klass: ()=>$("lpClass")
+  });
 
   function lpRender(d){
     const m = d.meta||{}, p = d.plan||{};
