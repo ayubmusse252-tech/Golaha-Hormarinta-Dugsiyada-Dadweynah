@@ -323,13 +323,15 @@ app.post("/api/generate-exam", requireAdmin, async (req, res) => {
     const { m: mN, s: sN } = autoCounts({ chars: allText.length, total, givenM, givenS, needM, needS });
     if (mN + sN === 0) return res.status(400).json({ error: "questions required" });
 
-    // Dhibcaha: MCQ ~40% (su'aal kasta ugu yaraan 1 dhibic), inta kale qaab-dhismeed
+    // Dhibcaha: saamiga 40:60 — Multiple Choice = 40%, Structure = 60% wadarta dhibcaha.
+    // Su'aal kastaa waa inay ugu yaraan 1 dhibic hesho (kaliya haddii wadarta aanay ogolayn ayaa saamigu xoogaa is-beddelaa).
     let mcqTotal = 0;
     if (mN === 0) mcqTotal = 0;
     else if (sN === 0) mcqTotal = total;
     else {
-      mcqTotal = Math.min(mN, Math.round(total * 0.4));
-      mcqTotal = Math.max(mcqTotal, Math.min(mN, total - sN)); // ha jirin su'aal 0 dhibic ah
+      mcqTotal = Math.round(total * 0.4);
+      mcqTotal = Math.max(mcqTotal, mN);          // MCQ kasta >= 1
+      mcqTotal = Math.min(mcqTotal, total - sN);  // structure kasta >= 1
       mcqTotal = Math.max(1, mcqTotal);
     }
     const structTotal = total - mcqTotal;
