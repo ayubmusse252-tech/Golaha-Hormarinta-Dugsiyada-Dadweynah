@@ -529,6 +529,67 @@ app.delete("/api/exams/:id", requireAdmin, async (req, res) => {
   }
 });
 
+// ---------- Lesson Plan + Lesson Note ----------
+pool.query(`CREATE TABLE IF NOT EXISTS lesson_plans (
+  id TEXT PRIMARY KEY, teacher TEXT DEFAULT '', subject TEXT DEFAULT '', class_name TEXT DEFAULT '',
+  title TEXT DEFAULT '', data JSONB NOT NULL DEFAULT '{}', created_at TIMESTAMPTZ DEFAULT now())`
+).catch((e) => console.error("LP DB init error:", e));
+
+app.post("/api/generate-lesson-plan", requireAdmin, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const f = (k) => String(b[k] || "").trim();
+    const meta = { teacher: f("teacher"), klass: f("klass"), subject: f("subject"), unit: f("unit"), lesson: f("lesson"),
+      date: f("date"), day: f("day"), session: f("session"), weekly: f("weekly"), duration: f("duration") || "40 min" };
+    if (!meta.unit && !meta.lesson) return res.status(400).json({ error: "Fadlan geli cutubka ama cinwaanka casharka." });
+    const src = f("text").slice(0, 30000);
+    const nObj = Math.min(6, Math.max(2, parseInt(b.numObjectives, 10) || 4));
+    const lang = LANG_NAMES[b.lang] ? b.lang : src ? detectLang(src) : "en";
+    meta.lang = lang;
+    const prompt = `You are an experienced teacher in a Somali secondary school writing a STANDARD lesson plan and its matching LESSON NOTE.
+Subject: ${meta.subject || "-"}; Class: ${meta.klass || "-"}; Unit/Chapter: ${meta.unit || "-"}; Lesson title: ${meta.lesson || "-"}; Duration: ${meta.duration}.
+Write everything in ${LANG_NAMES[lang]}.${src ? " Base the content ONLY on the lesson text below." : ""}
+Rules:
+- "objectives": exactly ${nObj} measurable objectives, each starting with an action verb (define, explain, list, apply, compare...) completing "the learner should be able to ...". Do not repeat the lead-in phrase.
+- "introduction": 2-3 sentences linking the unit "${meta.unit}" to the lesson "${meta.lesson}".
+- "methods": 3-4 suitable teaching methods, comma separated. "aids": learning aids, comma separated.
+- "evaluation": exactly 8 short questions/tasks, covering the objectives in order.
+- "note": the LESSON NOTE = a concise summary built from the objectives, the unit and the lesson title. One section per objective in the same order (heading "h" = the key idea of that objective, "p" = 2-4 short lines separated by \\n, with definitions/examples/formulas), then a final section with heading "Summary". Use the same terms as the plan; it must be consistent with it and answer the evaluation items. About 250-400 words.
+${src ? `\nLESSON TEXT:\n"""\n${src}\n"""\n` : ""}
+Return ONLY JSON (no code fences): {"introduction":"","objectives":[""],"methods":"","aids":"","evaluation":[""],"note":[{"h":"","p":""}]}`;
+    const plan = await askJson(prompt, 5000, "lesson-plan");
+    plan.objectives = (plan.objectives || []).slice(0, 6);
+    plan.evaluation = (plan.evaluation || []).slice(0, 8);
+    const id = crypto.randomUUID();
+    await pool.query(
+      `INSERT INTO lesson_plans (id, teacher, subject, class_name, title, data) VALUES ($1,$2,$3,$4,$5,$6)`,
+      [id, meta.teacher, meta.subject, meta.klass, [meta.unit, meta.lesson].filter(Boolean).join(" — "), JSON.stringify({ meta, plan })]
+    );
+    res.json({ id, meta, plan });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message || "server error" });
+  }
+});
+
+app.get("/api/lesson-plans", requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query("SELECT id, teacher, subject, class_name, title, created_at FROM lesson_plans ORDER BY created_at DESC LIMIT 100");
+    res.json(rows);
+  } catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+});
+app.get("/api/lesson-plans/:id", requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query("SELECT data FROM lesson_plans WHERE id=$1", [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: "not found" });
+    res.json(rows[0].data);
+  } catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+});
+app.delete("/api/lesson-plans/:id", requireAdmin, async (req, res) => {
+  try { await pool.query("DELETE FROM lesson_plans WHERE id=$1", [req.params.id]); res.json({ ok: true }); }
+  catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+});
+
 // ---------- Static ----------
 app.use(
   express.static(path.join(__dirname, "public"), {
