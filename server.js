@@ -48,6 +48,16 @@ async function initDb() {
     created_at TIMESTAMPTZ DEFAULT now(),
     PRIMARY KEY (doc_hash, page)
   )`);
+  // Kharashka API: call kasta waa la diiwaangeliyaa (token + doolar)
+  await pool.query(`CREATE TABLE IF NOT EXISTS api_usage (
+    id SERIAL PRIMARY KEY,
+    model TEXT NOT NULL DEFAULT '',
+    label TEXT NOT NULL DEFAULT '',
+    input_tokens INT NOT NULL DEFAULT 0,
+    output_tokens INT NOT NULL DEFAULT 0,
+    cost_usd NUMERIC(12,6) NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT now()
+  )`);
   console.log("✅ Database ready");
 }
 initDb().catch((e) => console.error("DB init error:", e));
@@ -73,10 +83,55 @@ app.post("/api/login", (req, res) => {
   res.status(401).json({ ok: false });
 });
 
+// ---------- Kharashka & hadhaaga lacagta ----------
+// Qiimaha halkii 1 milyan token (doolar). Hubi qiimaha rasmiga ah ee https://claude.com/pricing
+// oo hagaaji Variables-ka Railway haddii uu is beddelo.
+const PRICE_IN = parseFloat(process.env.PRICE_INPUT_PER_MTOK || "3");
+const PRICE_OUT = parseFloat(process.env.PRICE_OUTPUT_PER_MTOK || "15");
+// Lacagta aad ku shubtay console.anthropic.com (doolar)
+const CREDIT_START = parseFloat(process.env.CREDIT_START_USD || "5");
+
+async function recordUsage(u, label) {
+  try {
+    const inT = u.input_tokens || 0;
+    const outT = u.output_tokens || 0;
+    const cost = (inT * PRICE_IN + outT * PRICE_OUT) / 1e6;
+    await pool.query(
+      "INSERT INTO api_usage (model, label, input_tokens, output_tokens, cost_usd) VALUES ($1,$2,$3,$4,$5)",
+      [CLAUDE_MODEL, label || "", inT, outT, cost]
+    );
+  } catch (e) {
+    console.error("usage log error:", e.message);
+  }
+}
+
+app.get("/api/usage", requireAdmin, async (req, res) => {
+  try {
+    const tot = await pool.query(
+      "SELECT COALESCE(SUM(cost_usd),0)::float AS spent, COUNT(*)::int AS calls, COALESCE(SUM(input_tokens),0)::int AS inp, COALESCE(SUM(output_tokens),0)::int AS outp FROM api_usage"
+    );
+    const last = await pool.query(
+      "SELECT label, input_tokens, output_tokens, cost_usd::float AS cost, created_at FROM api_usage ORDER BY id DESC LIMIT 10"
+    );
+    const t = tot.rows[0];
+    res.json({
+      start: CREDIT_START,
+      spent: t.spent,
+      remaining: Math.max(0, CREDIT_START - t.spent),
+      calls: t.calls,
+      input_tokens: t.inp,
+      output_tokens: t.outp,
+      last: last.rows,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ---------- Claude API helper ----------
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || "claude-sonnet-5";
 
-async function callClaude({ system, messages, maxTokens }) {
+async function callClaude({ system, messages, maxTokens, label }) {
   if (!process.env.ANTHROPIC_API_KEY) {
     const err = new Error("ANTHROPIC_API_KEY lama dejin server-ka.");
     err.code = "no_api_key";
@@ -102,6 +157,7 @@ async function callClaude({ system, messages, maxTokens }) {
   const text = (json.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n");
   const u = json.usage || {};
   console.log(`[claude] stop=${json.stop_reason} in=${u.input_tokens} out=${u.output_tokens}`);
+  await recordUsage(u, label);
   return { text, stop: json.stop_reason };
 }
 
@@ -118,7 +174,7 @@ function extractJson(text) {
 async function askJson(prompt, maxTokens, label) {
   let last = "";
   for (let attempt = 0; attempt < 2; attempt++) {
-    const r = await callClaude({ messages: [{ role: "user", content: prompt }], maxTokens });
+    const r = await callClaude({ messages: [{ role: "user", content: prompt }], maxTokens, label });
     try {
       return extractJson(r.text);
     } catch (e) {
@@ -440,7 +496,7 @@ async function ocrOnePage(b64, mediaType) {
     },
     { type: "image", source: { type: "base64", media_type: mediaType, data: b64 } },
   ];
-  const r = await callClaude({ messages: [{ role: "user", content }], maxTokens: 4096 });
+  const r = await callClaude({ messages: [{ role: "user", content }], maxTokens: 4096, label: "ocr" });
   return (r.text || "").trim();
 }
 
