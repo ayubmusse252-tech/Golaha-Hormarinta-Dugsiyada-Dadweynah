@@ -120,8 +120,12 @@
     </div>
     <label class="diagram-toggle">
       <input type="checkbox" id="diagramToggle" checked>
-      📐 Samee sawir/diagram haddii su'aal u baahato
+      📐 Ku dar sawiro/diagrams (sida kuwa imtixaanka Qaranka)
     </label>
+    <div class="row" id="diagramOpts">
+      <div><label>Tirada diagrams-ka</label><input id="diagramCount" type="number" min="0" max="10" value="2"></div>
+      <div><label>Diagrams-ka ha ku saabsanaadeen (ikhtiyaari)</label><input id="diagramTopics" placeholder="tusaale: bilog, qalabka tijaabada, shaxan"></div>
+    </div>
 
     <button class="btn-primary" id="genBtn">⚡ Samee Imtixaanka</button>
     <div class="status" id="statusMsg"></div>
@@ -405,7 +409,8 @@
       totalMarks: parseInt($("totalMarks").value||"100",10),
       duration: $("duration").value.trim() || "2 saac",
       school: $("schoolName").value.trim(),
-      wantDiagrams: $("diagramToggle").checked,
+      diagramCount: $("diagramToggle").checked ? (parseInt($("diagramCount").value||"0",10) || 0) : 0,
+      diagramTopics: $("diagramToggle").checked ? $("diagramTopics").value.trim() : "",
       lessons,
     };
 
@@ -461,6 +466,9 @@
   }
 
   genBtn.addEventListener("click", generate);
+  function syncDiagramOpts(){ $("diagramOpts").style.display = $("diagramToggle").checked ? "grid" : "none"; }
+  $("diagramToggle").addEventListener("change", syncDiagramOpts);
+  syncDiagramOpts();
   $("printBtn").addEventListener("click", ()=>window.print());
   $("newBtn").addEventListener("click", ()=>{
     examOutput.classList.add("hidden");
