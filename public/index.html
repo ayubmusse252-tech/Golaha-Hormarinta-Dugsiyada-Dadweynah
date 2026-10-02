@@ -78,6 +78,26 @@
   #examOutput[dir=rtl] .q-diagram{margin:8px 18px 8px 0;}
   #examOutput[dir=rtl] .bloom-tag{margin-left:0;margin-right:6px;}
   .hint{font-size:.74rem;color:var(--dim);margin-top:3px;font-weight:400;}
+  .tabs{display:flex;gap:8px;margin:0 0 14px;}
+  .tabs button{flex:1;background:var(--surface2);color:var(--text);border:1px solid var(--border);}
+  .tabs button.on{background:var(--accent);color:#fff;border-color:var(--accent);}
+  #lpOut{margin-top:4px;}
+  .lp-page{background:#fff;border:1px solid var(--border);padding:12px;margin-bottom:14px;font-family:"Times New Roman",serif;font-size:.85rem;color:#000;}
+  .lp-img{width:100%;display:block;}
+  .lp-title{text-align:center;font-size:1.3rem;margin:4px 0 6px;font-family:Arial,sans-serif;}
+  .lp-grid{display:grid;grid-template-columns:1fr 150px;border:1px solid #000;}
+  .lp-grid>div:first-child{border-right:1px solid #000;}
+  .lp-h{text-align:center;font-weight:700;border-top:1px solid #000;border-bottom:1px solid #000;padding:3px;}
+  .lp-grid>div:first-child>.lp-c{border-bottom:none;padding:4px 6px;}
+  .lp-v{padding:4px 8px;min-height:30px;line-height:1.45;}
+  .lp-f .lp-h{border-top:1px solid #000;} .lp-f:first-child .lp-h{border-top:none;}
+  .lp-ev{display:grid;grid-template-columns:1fr 1fr;gap:4px 14px;}
+  .lp-tm{display:grid;grid-template-columns:1fr 1fr;border:1px solid #000;border-top:none;}
+  .lp-tm>div{padding:6px 8px;} .lp-tm>div:first-child{border-right:1px solid #000;}
+  .lp-note{border:1px solid #000;padding:10px 14px;line-height:1.55;min-height:420px;}
+  .lp-nh2{text-align:center;font-weight:700;font-size:1rem;margin-bottom:8px;}
+  .lp-nh{font-weight:700;margin-top:8px;} .lp-note p{margin:2px 0;}
+  @media print{ .lp-page{border:none;padding:0;page-break-after:always;} .lp-page:last-child{page-break-after:auto;} }
   @media print{
     body{background:#fff;color:#000;}
     .no-print{display:none !important;}
@@ -100,7 +120,11 @@
 <div class="wrap">
   <h1>📝 Samaynta Imtixaanka</h1>
   <p class="sub">Ku dheji ama soo geli buugga casharka, nidaamku wuxuu kuu dajin doonaa imtixaan heer-qaran ah oo ku dhisan Bloom's Taxonomy.</p>
-
+  <div class="tabs no-print">
+    <button id="tabExam" class="on" type="button">📝 Imtixaan</button>
+    <button id="tabLp" type="button">📘 Lesson Plan + Note</button>
+  </div>
+<div id="examTab">
   <div class="card no-print">
     <h2>📚 Imtixaanadii Hore</h2>
     <div id="savedList" class="status">Waa la soo dejinayaa...</div>
@@ -151,6 +175,50 @@
     <button class="btn-ghost" id="printBtn">🖨️ Daabac / Save PDF</button>
     <button class="btn-ghost" id="newBtn">🔄 Imtixaan Cusub</button>
   </div>
+</div><!-- /examTab -->
+<div id="lpTab" class="hidden">
+  <div class="card no-print">
+    <h2>📚 Lesson Plan-yadii Hore</h2>
+    <div id="lpSaved" class="status">Waa la soo dejinayaa...</div>
+  </div>
+  <div class="card no-print">
+    <h2>📘 Samee Lesson Plan + Lesson Note</h2>
+    <div class="row">
+      <div><label>Teacher name</label><input id="lpTeacher"></div>
+      <div><label>Class</label><input id="lpClass" placeholder="Form 4"></div>
+    </div>
+    <div class="row">
+      <div><label>Subject</label><input id="lpSubject" placeholder="English"></div>
+      <div><label>Unit / Chapter</label><input id="lpUnit" placeholder="Unit 3"></div>
+    </div>
+    <label>Lesson (cinwaanka casharka)</label><input id="lpLesson" placeholder="tusaale: Present Perfect Tense">
+    <div class="row3">
+      <div><label>Date</label><input id="lpDate" type="date"></div>
+      <div><label>Day</label><input id="lpDay" placeholder="Monday"></div>
+      <div><label>Lesson/Session</label><input id="lpSession" placeholder="1/3"></div>
+    </div>
+    <div class="row3">
+      <div><label>Time</label><input id="lpDur" value="40 min"></div>
+      <div><label>Weekly</label><input id="lpWeekly" placeholder="5 periods"></div>
+      <div><label>Tirada objectives</label><input id="lpNObj" type="number" min="2" max="6" value="4"></div>
+    </div>
+    <label>Luqadda</label>
+    <select id="lpLang">
+      <option value="en" selected>English</option><option value="so">Soomaali</option>
+      <option value="ar">العربية</option><option value="auto">Otomaatig — raac qoraalka</option>
+    </select>
+    <label>Qoraalka casharka (ikhtiyaari — si note-ku ugu salaysnaado buugga)</label>
+    <textarea id="lpText" placeholder="Ku dheji qoraalka casharka halkan..."></textarea>
+    <button class="btn-primary" id="lpGen">⚡ Samee Lesson Plan + Note</button>
+    <div class="status" id="lpStatus"></div>
+    <div class="err hidden" id="lpErr"></div>
+  </div>
+  <div id="lpOut" class="hidden"></div>
+  <div class="actions no-print hidden" id="lpActions">
+    <button class="btn-ghost" id="lpPrint">🖨️ Daabac / Save PDF</button>
+  </div>
+  <div class="hint no-print hidden" id="lpHint">✏️ Qoraalka lesson plan-ka iyo note-ka waad wax ka bedeli kartaa (guji oo qor) ka hor intaadan daabicin.</div>
+</div>
 </div>
 </div>
 
@@ -549,6 +617,83 @@
     statusMsg.textContent = "";
     formCard.scrollIntoView({behavior:"smooth"});
   });
+
+
+  // ---------- Lesson Plan + Lesson Note ----------
+  function showTab(lp){
+    $("examTab").classList.toggle("hidden", lp); $("lpTab").classList.toggle("hidden", !lp);
+    $("tabExam").classList.toggle("on", !lp); $("tabLp").classList.toggle("on", lp);
+    if (lp) lpLoadList();
+  }
+  $("tabExam").addEventListener("click", ()=>showTab(false));
+  $("tabLp").addEventListener("click", ()=>showTab(true));
+
+  function lpRender(d){
+    const m = d.meta||{}, p = d.plan||{};
+    const H = t=>`<div class="lp-h">${t}</div>`;
+    const box = (l,v)=>`<div class="lp-f">${H(l)}<div class="lp-v">${esc(v)||"&nbsp;"}</div></div>`;
+    const list = a=>(a||[]).map((x,i)=>`<div>${i+1}. ${esc(x)}</div>`).join("");
+    const note = (p.note||[]).map(s=>`<div class="lp-nh">${esc(s.h)}</div>` +
+      String(s.p||"").split("\n").filter(Boolean).map(x=>`<p>${esc(x)}</p>`).join("")).join("");
+    const img = `<img class="lp-img" src="/letterhead.jpg" alt="">`;
+    const rtl = m.lang === "ar" ? ' dir="rtl"' : "";
+    lpOut.innerHTML = `<div class="lp-page">${img}<div class="lp-title">LESSON PLAN 2026-2027</div>
+      <div class="lp-grid"><div>
+        <div class="lp-c"><b>TEACHER NAME:</b> ${esc(m.teacher)}</div>
+        ${H("Introduction")}<div class="lp-v"${rtl}>${esc(p.introduction)}</div>
+        ${H("Lesson Objectives")}<div class="lp-v"${rtl}><b>Insha Allah, after the end of the lesson, the learner should be able to:</b>${list(p.objectives)}</div>
+        ${H("Teaching Methods")}<div class="lp-v"${rtl}>${esc(p.methods)}</div>
+        ${H("LEARNING AIDS")}<div class="lp-v"${rtl}>${esc(p.aids)}</div>
+        ${H("Evaluation")}<div class="lp-v lp-ev"${rtl}>${list(p.evaluation)}</div>
+      </div><div>
+        ${box("Class",m.klass)}${box("Subject",m.subject)}${box("Date",m.date)}${box("Day",m.day)}
+        ${box("Unit",m.unit)}${box("Lesson",m.lesson)}${box("Time",m.duration)}${box("Lesson/Session",m.session)}
+      </div></div>
+      ${H("Time Management")}
+      <div class="lp-tm"><div><b>1. Question of the last lesson<br>2. Attendance of students<br>3. Explanation<br>4. Evaluation of lesson and homework</b></div>
+      <div><b>Weekly</b><div>${esc(m.weekly)}</div></div></div></div>
+      <div class="lp-page">${img}<div class="lp-title">LESSON NOTE</div>
+        <div class="lp-note"${rtl}><div class="lp-nh2">${esc([m.unit,m.lesson].filter(Boolean).join(" — "))}</div>${note}</div></div>`;
+    lpOut.contentEditable = "true";
+    ["lpOut","lpActions","lpHint"].forEach(i=>$(i).classList.remove("hidden"));
+  }
+  const lpOut = $("lpOut");
+
+  async function lpLoadList(){
+    const el = $("lpSaved");
+    try{
+      const rows = await api("/api/lesson-plans");
+      if (!rows.length){ el.textContent = "Wali lesson plan lama keydin."; return; }
+      el.innerHTML = rows.map(r=>`<div class="saved-item"><div><b>${esc(r.subject||"-")}</b> — ${esc(r.class_name||"")}
+        <div class="meta">${esc(r.title||"")} · ${new Date(r.created_at).toLocaleDateString()}</div></div>
+        <div class="sv-btns"><button class="btn-ghost" data-lo="${r.id}">👁️ Fur</button>
+        <button class="btn-ghost" data-ld="${r.id}" style="color:var(--bad);">🗑️</button></div></div>`).join("");
+      el.querySelectorAll("[data-lo]").forEach(b=>b.addEventListener("click", async ()=>{
+        try{ lpRender(await api("/api/lesson-plans/"+b.dataset.lo)); lpOut.scrollIntoView({behavior:"smooth"}); }catch(e){ alert("Khalad: "+e.message); }
+      }));
+      el.querySelectorAll("[data-ld]").forEach(b=>b.addEventListener("click", async ()=>{
+        if (!confirm("Ma hubtaa inaad tirtirto?")) return;
+        await api("/api/lesson-plans/"+b.dataset.ld, {method:"DELETE"}); lpLoadList();
+      }));
+    } catch(e){ el.textContent = "⚠️ Khalad soo dejin ah."; }
+  }
+
+  $("lpGen").addEventListener("click", async ()=>{
+    const v = id=>$(id).value.trim(), err = $("lpErr");
+    if (!v("lpUnit") && !v("lpLesson")){ err.textContent = "⚠️ Fadlan geli cutubka ama cinwaanka casharka."; err.classList.remove("hidden"); return; }
+    err.classList.add("hidden");
+    $("lpGen").disabled = true; $("lpStatus").textContent = "⏳ Waa la dejinayaa lesson plan-ka iyo note-ka... (20-40 ilbiriqsi)";
+    try{
+      const r = await api("/api/generate-lesson-plan", {method:"POST", body: JSON.stringify({
+        teacher:v("lpTeacher"), klass:v("lpClass"), subject:v("lpSubject"), unit:v("lpUnit"), lesson:v("lpLesson"),
+        date:v("lpDate"), day:v("lpDay"), session:v("lpSession"), weekly:v("lpWeekly"), duration:v("lpDur"),
+        numObjectives:v("lpNObj"), lang:$("lpLang").value, text:v("lpText") })});
+      lpRender(r); $("lpStatus").textContent = "✅ Waa la diyaariyay oo la keydiyay."; lpLoadList();
+      lpOut.scrollIntoView({behavior:"smooth"});
+    } catch(e){ err.textContent = "⚠️ " + (e.message||"Khalad"); err.classList.remove("hidden"); $("lpStatus").textContent = ""; }
+    finally { $("lpGen").disabled = false; }
+  });
+  $("lpPrint").addEventListener("click", ()=>window.print());
 
   boot();
 })();
