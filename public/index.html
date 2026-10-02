@@ -95,10 +95,21 @@
   .lp-tt{width:100%;border-collapse:collapse;border:1px solid #000;border-top:none;}
   .lp-tt th,.lp-tt td{border:1px solid #000;padding:4px 8px;text-align:left;}
   .lp-tt th{background:#f1f1f1;} .lp-tt .c{text-align:center;width:90px;}
-  .lp-note{border:1px solid #000;padding:10px 14px;line-height:1.55;min-height:420px;}
+  .lp-note{border:1px solid #000;padding:10px 14px;line-height:1.55;}
   .lp-nh2{text-align:center;font-weight:700;font-size:1rem;margin-bottom:8px;}
   .lp-nh{font-weight:700;margin-top:8px;} .lp-note p{margin:2px 0;}
-  @media print{ .lp-page{border:none;padding:0;page-break-after:always;} .lp-page:last-child{page-break-after:auto;} }
+  .lp-tmw{break-inside:avoid;page-break-inside:avoid;} .lp-tt tr{break-inside:avoid;page-break-inside:avoid;}
+  .lp-sign{display:flex;justify-content:space-between;align-items:flex-end;gap:20px;margin-top:22px;break-inside:avoid;page-break-inside:avoid;}
+  .lp-sign .sl{flex:1;font-weight:700;} .lp-sign .sl span{display:inline-block;border-bottom:1px solid #000;width:55%;min-width:120px;margin-left:6px;}
+  .lp-sign .st{width:120px;height:90px;border:1px dashed #000;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;}
+  .lp-nh{break-after:avoid;page-break-after:avoid;}
+  @media print{
+    @page{margin:10mm;}
+    .lp-page{border:none;padding:0;margin-bottom:8px;font-size:.8rem;}
+    .lp-page + .lp-page{margin-top:10px;} .lp-page + .lp-page .lp-img{display:none;}
+    .lp-v{min-height:0;padding:3px 8px;line-height:1.35;} .lp-tt th,.lp-tt td{padding:2px 8px;}
+    .lp-note{padding:6px 12px;line-height:1.4;}
+  }
   @media print{
     body{background:#fff;color:#000;}
     .no-print{display:none !important;}
@@ -655,13 +666,14 @@
         ${box("Class",m.klass)}${box("Subject",m.subject)}${box("Date",m.date)}${box("Day",m.day)}
         ${box("Unit",m.unit)}${box("Lesson",m.lesson)}${box("Time",m.duration)}${box("Lesson/Session",m.session)}
       </div></div>
-      ${H("Time Management")}
+      <div class="lp-tmw">${H("Time Management")}
       <table class="lp-tt"><tr><th class="c">No.</th><th>Stage / Activity</th><th class="c">Time (min)</th></tr>
       ${tm.map((r,i)=>`<tr><td class="c">${i+1}</td><td>${r[0]}</td><td class="c">${r[1]}</td></tr>`).join("")}
       <tr><td></td><td><b>Total</b></td><td class="c"><b>${tm.reduce((a,r)=>a+r[1],0)}</b></td></tr>
-      <tr><td></td><td><b>Weekly</b></td><td class="c">${esc(m.weekly)||"&nbsp;"}</td></tr></table></div>
+      <tr><td></td><td><b>Weekly</b></td><td class="c">${esc(m.weekly)||"&nbsp;"}</td></tr></table></div></div>
       <div class="lp-page">${img}<div class="lp-title">LESSON NOTE</div>
-        <div class="lp-note"${rtl}><div class="lp-nh2">${esc([m.unit,m.lesson].filter(Boolean).join(" — "))}</div>${note}</div></div>`;
+        <div class="lp-note"${rtl}><div class="lp-nh2">${esc([m.unit,m.lesson].filter(Boolean).join(" — "))}</div>${note}</div>
+        <div class="lp-sign"><div class="sl">Madaxa Xafiiska Waxbarashada:<span>&nbsp;</span></div><div class="st">Stamp</div></div></div>`;
     lpOut.contentEditable = "true";
     ["lpOut","lpActions","lpHint"].forEach(i=>$(i).classList.remove("hidden"));
   }
