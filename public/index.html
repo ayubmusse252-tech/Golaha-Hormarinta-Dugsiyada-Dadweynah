@@ -72,6 +72,12 @@
   .saved-item .meta{color:var(--dim);font-size:.75rem;}
   .saved-item .sv-btns{display:flex;gap:6px;flex-shrink:0;}
   .saved-item button{padding:5px 9px;font-size:.72rem;}
+  #examOutput[dir=rtl]{text-align:right;}
+  #examOutput[dir=rtl] .q .marks{float:right;margin-right:0;margin-left:6px;}
+  #examOutput[dir=rtl] .opts{margin:4px 18px 0 0;}
+  #examOutput[dir=rtl] .q-diagram{margin:8px 18px 8px 0;}
+  #examOutput[dir=rtl] .bloom-tag{margin-left:0;margin-right:6px;}
+  .hint{font-size:.74rem;color:var(--dim);margin-top:3px;font-weight:400;}
   @media print{
     body{background:#fff;color:#000;}
     .no-print{display:none !important;}
@@ -110,14 +116,22 @@
       <div><label>Fasalka</label><input id="klass" placeholder="tusaale: Form 4"></div>
     </div>
     <div class="row3">
-      <div><label>Tirada su'aalaha ikhtiyaar (MCQ)</label><input id="mcqN" type="number" min="0" max="30" value="10"></div>
-      <div><label>Tirada su'aalaha qaab-dhismeed</label><input id="structN" type="number" min="0" max="20" value="8"></div>
+      <div><label>Su'aalaha ikhtiyaar (MCQ)</label><input id="mcqN" type="number" min="0" max="60" placeholder="Otomaatig"></div>
+      <div><label>Su'aalaha qaab-dhismeed</label><input id="structN" type="number" min="0" max="30" placeholder="Otomaatig"></div>
       <div><label>Wadarta dhibcaha</label><input id="totalMarks" type="number" min="10" max="200" value="100"></div>
     </div>
+    <div class="hint">Haddii aadan qorin tirada su'aalaha, nidaamku wuxuu ka doortaa dherer qoraalka iyo wadarta dhibcaha. Qor 0 si aan loo samayn nooca ay tahay.</div>
     <div class="row">
-      <div><label>Waqtiga imtixaanka</label><input id="duration" value="2 saac iyo 10 daqiiqo"></div>
+      <div><label>Waqtiga imtixaanka</label><input id="duration" placeholder="tusaale: 2 saac / 2 hours"></div>
       <div><label>Dugsiga</label><input id="schoolName" placeholder="Dugsiga Sare ee ..."></div>
     </div>
+    <label>Luqadda imtixaanka</label>
+    <select id="langSel">
+      <option value="auto" selected>Otomaatig — raac luqadda casharka (tarjumaad la'aan)</option>
+      <option value="so">Soomaali</option>
+      <option value="en">English</option>
+      <option value="ar">العربية</option>
+    </select>
     <label class="diagram-toggle">
       <input type="checkbox" id="diagramToggle" checked>
       📐 Ku dar sawiro/diagrams (sida kuwa imtixaanka Qaranka)
@@ -225,6 +239,16 @@
   let lessonSeq = 0;
   const pdfPagesMap = new Map();  // lessonId -> extracted text per page
   const pdfDocMap = new Map();    // lessonId -> pdf.js document proxy (for OCR re-render)
+  const pdfHashMap = new Map();   // lessonId -> {hash, name} (furaha keydka OCR)
+  async function fileHash(file, buf){
+    try{
+      if (window.crypto && crypto.subtle){
+        const d = await crypto.subtle.digest("SHA-256", buf);
+        return Array.from(new Uint8Array(d)).map(b=>b.toString(16).padStart(2,"0")).join("");
+      }
+    } catch(e){}
+    return "fallback-" + file.name + "-" + file.size;
+  }
   const loadedScripts = {};
   function loadScript(url){
     if (loadedScripts[url]) return loadedScripts[url];
@@ -257,43 +281,78 @@
     div.querySelector(".l-text").value = text;
     const avgLen = text.length / Math.max(1, nums.length);
     if (avgLen < 15){
-      status.textContent = `⚠️ Buuggu wuxuu u muuqdaa mid sawir ah (scanned) — ${pages.length} bog, wax qoraal ah lagama helin. Isticmaal "🔍 Akhri Sawirka (OCR)".`;
       ocrBtn.style.display = "inline-block";
+      const ocrNums = ocrTargetPages(div, pages.length);
+      let cachedCount = 0;
+      try{
+        const c = await fetchOcrCache(lessonId, ocrNums);
+        cachedCount = ocrNums.filter(n=>c[n]!==undefined).length;
+        if (cachedCount === ocrNums.length && cachedCount){
+          div.querySelector(".l-text").value = ocrNums.map(n=>c[n]||"").filter(Boolean).join("\n\n");
+          status.textContent = `✅ Buuggan hore ayaa loo akhriyay — ${cachedCount} bog ayaa keydka laga helay (OCR cusub lagama baahna).`;
+          return;
+        }
+      } catch(e){}
+      status.textContent = `⚠️ Buuggu wuxuu u muuqdaa mid sawir ah (scanned) — ${pages.length} bog. ` +
+        (cachedCount ? `${cachedCount}/${ocrNums.length} bog ayaa keydka ku jira; ` : "") + `taabo "🔍 Akhri Sawirka (OCR)" ${ocrNums.length - cachedCount} bog oo cusub.`;
     } else {
       status.textContent = `✅ ${pages.length} bog oo buuggu leeyahay — ${nums.length} bog ayaa la geliyay.`;
       ocrBtn.style.display = "none";
     }
   }
+  // Boggagga OCR loo samaynayo: haddii bogag la qoray waa kuwaas; haddii kale 20-ka bog ee ugu horreeya.
+  function ocrTargetPages(div, numPages){
+    const rangeStr = div.querySelector(".l-pages").value.trim();
+    return rangeStr ? parsePageRange(rangeStr, numPages) : Array.from({length: Math.min(numPages,20)}, (_,i)=>i+1);
+  }
+  async function fetchOcrCache(lessonId, nums){
+    const h = pdfHashMap.get(lessonId);
+    if (!h || !nums.length) return {};
+    const r = await api("/api/ocr-cache", { method:"POST", body: JSON.stringify({ docHash: h.hash, pages: nums }) });
+    return r.pages || {};
+  }
   async function runOcr(lessonId, div){
     const pdf = pdfDocMap.get(lessonId);
     if (!pdf) return;
+    const h = pdfHashMap.get(lessonId) || {};
     const status = div.querySelector(".l-filestatus");
-    const rangeStr = div.querySelector(".l-pages").value.trim();
-    const nums = rangeStr ? parsePageRange(rangeStr, pdf.numPages) : Array.from({length: Math.min(pdf.numPages,20)}, (_,i)=>i+1);
+    const nums = ocrTargetPages(div, pdf.numPages);
     if (!nums.length){ status.textContent = "⚠️ Fadlan geli bogagga aad rabto (tusaale: 1-5)."; return; }
-    status.textContent = `⏳ Sawirka waa la akhrinayaa (OCR)... 0/${nums.length}`;
-    let fullText = "";
-    const BATCH = 4;
     try{
-      for (let i=0; i<nums.length; i+=BATCH){
-        const batch = nums.slice(i, i+BATCH);
-        const images = [];
+      // 1) Marka hore keydka eeg — boggagga hore loo akhriyay dib looma akhrinayo
+      status.textContent = "⏳ Keydka waa la eegayaa...";
+      const texts = Object.assign({}, await fetchOcrCache(lessonId, nums));
+      const cachedCount = nums.filter(n=>texts[n]!==undefined).length;
+      const missing = nums.filter(n=>texts[n]===undefined);
+
+      // 2) Kuwa cusub oo keliya OCR u samee
+      const BATCH = 4;
+      let done = 0;
+      for (let i=0; i<missing.length; i+=BATCH){
+        status.textContent = `⏳ OCR: ${done}/${missing.length} bog cusub (${cachedCount} bog keydka laga qaaday)...`;
+        const batch = missing.slice(i, i+BATCH);
+        const pages = [];
         for (const pageNum of batch){
           const page = await pdf.getPage(pageNum);
           const viewport = page.getViewport({scale: 1.6});
           const canvas = document.createElement("canvas");
           canvas.width = viewport.width; canvas.height = viewport.height;
           await page.render({canvasContext: canvas.getContext("2d"), viewport}).promise;
-          images.push(canvas.toDataURL("image/png").split(",")[1]);
+          pages.push({ num: pageNum, image: canvas.toDataURL("image/png").split(",")[1] });
         }
-        const r = await api("/api/ocr-pages", { method:"POST", body: JSON.stringify({ images, mediaType:"image/png" }) });
-        fullText += (fullText?"\n\n":"") + (r.text||"");
-        status.textContent = `⏳ Sawirka waa la akhrinayaa (OCR)... ${Math.min(i+BATCH,nums.length)}/${nums.length}`;
+        const r = await api("/api/ocr-pages", { method:"POST", body: JSON.stringify({ docHash: h.hash||"", docName: h.name||"", pages, mediaType:"image/png" }) });
+        Object.keys(r.pages||{}).forEach(k=>{ texts[k] = r.pages[k]; });
+        done += batch.length;
+        // Qoraalka ilaa hadda la helay isla markiiba muuji (haddii wax khaldamaan, waxa la keydiyay ma lumayo)
+        div.querySelector(".l-text").value = nums.map(n=>texts[n]||"").filter(Boolean).join("\n\n");
       }
-      div.querySelector(".l-text").value = fullText;
-      status.textContent = fullText.trim() ? `✅ OCR dhammaystirmay — ${nums.length} bog.` : "⚠️ Wax qoraal ah lagama helin sawirrada.";
+      const full = nums.map(n=>texts[n]||"").filter(Boolean).join("\n\n");
+      div.querySelector(".l-text").value = full;
+      status.textContent = full.trim()
+        ? `✅ ${nums.length} bog ayaa diyaar ah — ${cachedCount} keydka laga helay, ${missing.length} cusub ayaa la akhriyay oo la keydiyay.`
+        : "⚠️ Wax qoraal ah lagama helin sawirrada.";
     } catch(e){
-      status.textContent = "⚠️ Khalad OCR ah: " + e.message;
+      status.textContent = "⚠️ Khalad OCR ah: " + e.message + " (boggagga hore loo dhammeeyay waa la keydiyay; mar kale taabo OCR si uu uga sii socdo.)";
     }
   }
   async function handleFile(file, lessonId, div){
@@ -307,7 +366,8 @@
         await loadScript("https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js");
         window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
         const buf = await file.arrayBuffer();
-        const pdf = await window.pdfjsLib.getDocument({data: buf}).promise;
+        pdfHashMap.set(lessonId, { hash: await fileHash(file, buf), name: file.name });
+        const pdf = await window.pdfjsLib.getDocument({data: buf.slice(0)}).promise;
         pdfDocMap.set(lessonId, pdf);
         const pages = [];
         for (let i=1;i<=pdf.numPages;i++){
@@ -357,7 +417,7 @@
       <textarea class="l-text" placeholder="...ama ku dheji halkan qoraalka gacanta"></textarea>`;
     lessonsWrap.appendChild(div);
     div.querySelector(".rm").addEventListener("click", ()=>{
-      pdfPagesMap.delete(id); pdfDocMap.delete(id);
+      pdfPagesMap.delete(id); pdfDocMap.delete(id); pdfHashMap.delete(id);
       if (lessonsWrap.children.length > 1) div.remove();
       else { div.querySelector(".l-text").value=""; div.querySelector(".l-chapter").value=""; div.querySelector(".l-pages").value=""; div.querySelector(".l-filestatus").textContent=""; }
     });
@@ -402,12 +462,13 @@
     resultActions.classList.add("hidden");
 
     const body = {
-      subject: $("subject").value.trim() || "Maadada",
-      klass: $("klass").value.trim() || "Fasalka",
-      mcqN: parseInt($("mcqN").value||"0",10),
-      structN: parseInt($("structN").value||"0",10),
+      subject: $("subject").value.trim(),
+      klass: $("klass").value.trim(),
+      mcqN: $("mcqN").value.trim() === "" ? null : parseInt($("mcqN").value,10),
+      structN: $("structN").value.trim() === "" ? null : parseInt($("structN").value,10),
       totalMarks: parseInt($("totalMarks").value||"100",10),
-      duration: $("duration").value.trim() || "2 saac",
+      duration: $("duration").value.trim(),
+      lang: $("langSel").value,
       school: $("schoolName").value.trim(),
       diagramCount: $("diagramToggle").checked ? (parseInt($("diagramCount").value||"0",10) || 0) : 0,
       diagramTopics: $("diagramToggle").checked ? $("diagramTopics").value.trim() : "",
@@ -417,7 +478,9 @@
     try{
       const r = await api("/api/generate-exam", { method:"POST", body: JSON.stringify(body) });
       renderExam(r.exam, r.meta);
-      statusMsg.textContent = "✅ Imtixaanka waa la diyaariyay oo la keydiyay.";
+      const c = (r.meta && r.meta.counts) || {};
+      const auto = (c.autoMcq || c.autoStruct) ? ` (${c.mcq||0} MCQ + ${c.struct||0} qaab-dhismeed${c.autoMcq||c.autoStruct ? " — tirada otomaatig ayaa loo doortay" : ""})` : "";
+      statusMsg.textContent = "✅ Imtixaanka waa la diyaariyay oo la keydiyay." + auto;
       loadSavedExams();
     } catch(e){
       showErr(e.message || "Khalad ayaa dhacay.");
@@ -427,27 +490,36 @@
     }
   }
 
+  // Imtixaannada hore loo keydiyay (ka hor luqad-doorashada) waxay isticmaalaan Soomaali.
+  const SO_LABELS = {
+    defSchool:"Imtixaanka Maadada", titleTemplate:"Imtixaanka {subject} — {class}",
+    totalMarks:"Wadarta Dhibcaha", time:"Waqtiga", studentName:"Magaca Ardayga", klass:"Fasalka", date:"Taariikhda",
+    source:"Isha", marksWord:"dhibcood", answerKey:"🔑 Furaha Jawaabaha (macalinka kaliya)", bloom:{}
+  };
   function renderExam(data, meta){
     meta = meta || {};
+    const Lb = Object.assign({}, SO_LABELS, meta.labels || {});
+    const rtl = meta.lang === "ar";
     const sections = (data && data.sections) || [];
     const answerKey = (data && data.answerKey) || [];
+    const title = Lb.titleTemplate.replace("{subject}", meta.subject||"").replace("{class}", meta.klass||"");
     let html = `<div class="ex-head">
-      ${meta.school ? `<h2>${esc(meta.school)}</h2>` : `<h2>Imtixaanka Maadada</h2>`}
-      <div class="meta">Imtixaanka ${esc(meta.subject)} — ${esc(meta.klass)}</div>
-      <div class="meta">Wadarta Dhibcaha: ${esc(meta.totalMarks)} &nbsp;|&nbsp; Waqtiga: ${esc(meta.duration)}</div>
+      ${meta.school ? `<h2>${esc(meta.school)}</h2>` : `<h2>${esc(Lb.defSchool)}</h2>`}
+      <div class="meta">${esc(title)}</div>
+      <div class="meta">${esc(Lb.totalMarks)}: ${esc(meta.totalMarks)} &nbsp;|&nbsp; ${esc(Lb.time)}: ${esc(meta.duration)}</div>
     </div>
     <div class="ex-fields">
-      <span>Magaca Ardayga: ______________________</span>
-      <span>Fasalka: ______</span>
-      <span>Taariikhda: __________</span>
+      <span>${esc(Lb.studentName)}: ______________________</span>
+      <span>${esc(Lb.klass)}: ______</span>
+      <span>${esc(Lb.date)}: __________</span>
     </div>`;
-    if (meta.sourcesLabel) html += `<div class="ex-sources">Isha: ${esc(meta.sourcesLabel)}</div>`;
+    if (meta.sourcesLabel) html += `<div class="ex-sources">${esc(Lb.source)}: ${esc(meta.sourcesLabel)}</div>`;
 
     sections.forEach(sec=>{
-      html += `<div class="ex-section-title">${esc(sec.name)} (${esc(sec.marks)} dhibcood)</div>`;
+      html += `<div class="ex-section-title">${esc(sec.name)} (${esc(sec.marks)} ${esc(Lb.marksWord)})</div>`;
       if (sec.instructions) html += `<div class="ex-instr">${esc(sec.instructions)}</div>`;
       (sec.questions||[]).forEach(q=>{
-        html += `<div class="q"><span class="marks">[${esc(q.marks)}]</span><b>${esc(q.number)}.</b> ${esc(q.text)}<span class="bloom-tag">${esc(q.bloom||"")}</span>`;
+        html += `<div class="q"><span class="marks">[${esc(q.marks)}]</span><b>${esc(q.number)}.</b> ${esc(q.text)}<span class="bloom-tag">${esc((Lb.bloom||{})[q.bloom] || q.bloom || "")}</span>`;
         if (q.svg && /^\s*<svg[\s>]/i.test(q.svg)) html += `<div class="q-diagram">${sanitizeSvg(q.svg)}</div>`;
         if (q.options && q.options.length) html += `<div class="opts">` + q.options.map(o=>`<div>${esc(o)}</div>`).join("") + `</div>`;
         html += `</div>`;
@@ -455,12 +527,13 @@
     });
 
     if (answerKey.length){
-      html += `<details class="answerkey no-print"><summary>🔑 Furaha Jawaabaha (macalinka kaliya)</summary><ol>`;
+      html += `<details class="answerkey no-print"><summary>${esc(Lb.answerKey)}</summary><ol>`;
       answerKey.forEach(a=>{ html += `<li value="${esc(a.number)}">${esc(a.answer)}</li>`; });
       html += `</ol></details>`;
     }
 
     examOutput.innerHTML = html;
+    examOutput.dir = rtl ? "rtl" : "ltr";
     examOutput.classList.remove("hidden");
     resultActions.classList.remove("hidden");
   }
