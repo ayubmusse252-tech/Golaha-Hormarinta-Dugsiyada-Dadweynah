@@ -119,9 +119,13 @@ app.post("/api/generate-exam", requireAdmin, async (req, res) => {
       totalMarks = 100,
       duration = "2 saac",
       school = "",
-      wantDiagrams = true,
+      diagramCount = 0,
+      diagramTopics = "",
       lessons = [],
     } = req.body || {};
+
+    const dCount = Math.max(0, Math.min(10, parseInt(diagramCount, 10) || 0));
+    const dTopics = String(diagramTopics || "").trim();
 
     const cleanLessons = (Array.isArray(lessons) ? lessons : []).filter((l) => l && l.text && l.text.trim());
     if (!cleanLessons.length) return res.status(400).json({ error: "lessons required" });
@@ -137,9 +141,9 @@ app.post("/api/generate-exam", requireAdmin, async (req, res) => {
       })
       .join("\n\n");
 
-    const diagramInstr = wantDiagrams
-      ? `Haddii su'aal ay u baahan tahay sawir/diagram si loo fahmo (geometri, jir-dhiska, koronto, jadwal/graph, khariidad), ku dar qeyb "svg" oo ay ku jirto SVG qoraal ah (<svg viewBox="0 0 300 200">...</svg>, mid fudud oo cad) — kaliya markay runtii u baahan tahay.`
-      : `Ha ku darin wax sawir/diagram ah (svg) su'aal kasta.`;
+    const diagramInstr = dCount > 0
+      ? `Waa INUU IMTIXAANKU KU JIRO SI SAX AH ${dCount} sawir/diagram (SVG), sida kuwa ku jira imtixaanada Qaranka Soomaaliya (tusaale: shaxan/jir geometri ah oo cabbirro leh, bilog/jibaarane, jaantus jir-dhiska sida spring/wave, qaab-dhismeedka kiimikada (molecular structure), khadka/qalabka tijaabada koronto ama radioactive detector, khariidad ama graph). Dooro ${dCount} su'aalood oo ka mid ah kuwa ugu habboon qoraalka casharka (kuwaas oo runtii u baahan in lagu sawiro), oo mid kasta ku dar qeyb "svg" oo ay ku jirto SVG qoraal ah oo fudud, cad, oo la fahmi karo: <svg viewBox="0 0 300 200" xmlns="http://www.w3.org/2000/svg">...</svg> (isticmaal khadad/qaab fudud, qoraal ku jira xaruufo/tiro haddii loo baahdo, sida kuwa buugga). Dhammaan su'aalaha kale ee aan ahayn kuwan la doortay, "svg" waa inay ahaadaan null. Ha dhaafin, hana ka badin tirada ${dCount}.${dTopics ? ` Diagrams-ka intii suurtagal ah ha ku saabsanaadeen mawduucyadan: ${dTopics}.` : ""}`
+      : `Ha ku darin wax sawir/diagram ah (svg) su'aal kasta — dhammaan qiyamka "svg" waa inay ahaadaan null.`;
 
     const prompt = `Waxaad tahay khabiir diyaarinaya imtixaanaada dugsiyada sare ee Soomaaliya, oo ku dhaqan qaabka imtixaanada heer-qaran (sida kuwa Puntland/Qaranka Soomaaliya): laba qaybood — Qaybta 1 ikhtiyaar sax ah (multiple choice), Qaybta 2 su'aalo qaab-dhismeed ah (structured/short-answer/essay). Su'aal kasta waa inay ku salaysan tahay oo keliya qoraallada casharrada/cutubyada hoose.
 
