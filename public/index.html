@@ -147,6 +147,11 @@
 <div class="wrap">
   <h1 class="no-print">📝 Samaynta Imtixaanka</h1>
   <p class="sub no-print">Ku dheji ama soo geli buugga casharka, nidaamku wuxuu kuu dajin doonaa imtixaan heer-qaran ah oo ku dhisan Bloom's Taxonomy.</p>
+  <div id="usageBox" class="no-print" style="display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:10px;padding:8px 12px;margin:8px 0;font-size:14px">
+    <span id="usageText">💰 Hadhaaga: ...</span>
+    <button id="usageBtn" type="button" style="border:0;background:#e2e8f0;border-radius:8px;padding:4px 10px;cursor:pointer">🔄</button>
+  </div>
+  <div id="usageDetail" class="no-print hidden" style="font-size:13px;background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:8px 12px;margin-bottom:8px"></div>
   <div class="tabs no-print">
     <button id="tabExam" class="on" type="button">📝 Imtixaan</button>
     <button id="tabLp" type="button">📘 Lesson Plan + Note</button>
@@ -317,12 +322,24 @@
     $("appShell").classList.remove("hidden");
   }
 
+
+  async function loadUsage(){
+    try{
+      const u = await api("/api/usage");
+      const f = n => "$" + Number(n).toFixed(4);
+      $("usageText").textContent = "💰 Hadhay: $" + u.remaining.toFixed(2) + " / $" + u.start.toFixed(2) + " · La isticmaalay: " + f(u.spent) + " · " + u.calls + " call";
+      const rows = (u.last||[]).map(r => "• " + (r.label||"call") + ": " + r.input_tokens + " in / " + r.output_tokens + " out = " + f(r.cost)).join("<br>");
+      $("usageDetail").innerHTML = "<b>10-kii ugu dambeeyay:</b><br>" + (rows || "Weli wax call ah ma jiro.");
+    }catch(e){}
+  }
+  $("usageBtn").addEventListener("click", ()=>{ $("usageDetail").classList.toggle("hidden"); loadUsage(); });
+
   async function boot(){
     const pw = getPw();
     if (!pw){ showLogin(); return; }
     try{
       const j = await fetch("/api/login", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({password:pw}) }).then(r=>r.json());
-      if (j.ok){ showApp(); loadSavedExams(); libReload(); }
+      if (j.ok){ showApp(); loadSavedExams(); libReload(); loadUsage(); setInterval(loadUsage, 20000); }
       else showLogin();
     } catch(e){ showLogin("Khalad xidhiidh server ah."); }
   }
@@ -332,7 +349,7 @@
     try{
       const res = await fetch("/api/login", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({password:pw}) });
       const j = await res.json();
-      if (j.ok){ localStorage.setItem(PW_KEY, pw); showApp(); loadSavedExams(); libReload(); }
+      if (j.ok){ localStorage.setItem(PW_KEY, pw); showApp(); loadSavedExams(); libReload(); loadUsage(); setInterval(loadUsage, 20000); }
       else { $("loginErr").textContent = "Sirta waa qalad."; $("loginErr").classList.remove("hidden"); }
     } catch(e){ $("loginErr").textContent = "Khalad server ah."; $("loginErr").classList.remove("hidden"); }
   });
