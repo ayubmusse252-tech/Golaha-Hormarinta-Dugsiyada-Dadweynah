@@ -85,12 +85,15 @@
   .lp-page{background:#fff;border:1px solid var(--border);padding:12px;margin-bottom:14px;font-family:"Times New Roman",serif;font-size:.85rem;color:#000;}
   .lp-img{width:100%;display:block;}
   .lp-title{text-align:center;font-size:1.3rem;margin:4px 0 6px;font-family:Arial,sans-serif;}
-  .lp-grid{display:grid;grid-template-columns:1fr 150px;border:1px solid #000;}
-  .lp-grid>div:first-child{border-right:1px solid #000;}
+  .lp-grid{border:1px solid #000;}
   .lp-h{text-align:center;font-weight:700;border-top:1px solid #000;border-bottom:1px solid #000;padding:3px;}
-  .lp-grid>div:first-child>.lp-c{border-bottom:none;padding:4px 6px;}
+  .lp-c{padding:4px 6px;}
   .lp-v{padding:4px 8px;min-height:30px;line-height:1.45;}
-  .lp-f .lp-h{border-top:1px solid #000;} .lp-f:first-child .lp-h{border-top:none;}
+  .lp-info{display:flex;border-top:1px solid #000;}
+  .lp-info>div{flex:1 1 0;min-width:0;border-right:1px solid #000;text-align:center;}
+  .lp-info>div:last-child{border-right:none;} .lp-info>div.w{flex:2.2 1 0;}
+  .lp-info .il{font-weight:700;border-bottom:1px solid #000;padding:2px 3px;font-size:.9em;}
+  .lp-info .iv{padding:3px 4px;min-height:22px;overflow-wrap:anywhere;}
   .lp-ev{display:grid;grid-template-columns:1fr 1fr;gap:4px 14px;}
   .lp-tt{width:100%;border-collapse:collapse;border:1px solid #000;border-top:none;}
   .lp-tt th,.lp-tt td{border:1px solid #000;padding:4px 8px;text-align:left;}
@@ -655,17 +658,16 @@
     mins[2] += tot - mins.reduce((a,x)=>a+x,0);
     const tm = ["Question of the last lesson","Attendance of students","Explanation","Evaluation of lesson and homework"].map((t,i)=>[t, mins[i]]);
     lpOut.innerHTML = `<div class="lp-page">${img}<div class="lp-title">LESSON PLAN 2026-2027</div>
-      <div class="lp-grid"><div>
+      <div class="lp-grid">
         <div class="lp-c"><b>TEACHER NAME:</b> ${esc(m.teacher)}</div>
+        <div class="lp-info">${[["Class",m.klass],["Subject",m.subject],["Date",m.date],["Day",m.day],["Unit",m.unit],["Lesson",m.lesson,"w"],["Time",m.duration],["Lesson/Session",m.session]]
+          .map(x=>`<div${x[2]?' class="w"':''}><div class="il">${x[0]}</div><div class="iv">${esc(x[1])||"&nbsp;"}</div></div>`).join("")}</div>
         ${H("Introduction")}<div class="lp-v"${rtl}>${esc(p.introduction)}</div>
         ${H("Lesson Objectives")}<div class="lp-v"${rtl}><b>Insha Allah, after the end of the lesson, the learner should be able to:</b>${list(p.objectives)}</div>
         ${H("Teaching Methods")}<div class="lp-v"${rtl}>${esc(p.methods)}</div>
         ${H("LEARNING AIDS")}<div class="lp-v"${rtl}>${esc(p.aids)}</div>
         ${H("Evaluation")}<div class="lp-v lp-ev"${rtl}>${list(p.evaluation)}</div>
-      </div><div>
-        ${box("Class",m.klass)}${box("Subject",m.subject)}${box("Date",m.date)}${box("Day",m.day)}
-        ${box("Unit",m.unit)}${box("Lesson",m.lesson)}${box("Time",m.duration)}${box("Lesson/Session",m.session)}
-      </div></div>
+      </div>
       <div class="lp-tmw">${H("Time Management")}
       <table class="lp-tt"><tr><th class="c">No.</th><th>Stage / Activity</th><th class="c">Time (min)</th></tr>
       ${tm.map((r,i)=>`<tr><td class="c">${i+1}</td><td>${r[0]}</td><td class="c">${r[1]}</td></tr>`).join("")}
