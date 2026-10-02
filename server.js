@@ -65,7 +65,7 @@ app.post("/api/login", (req, res) => {
 });
 
 // ---------- Claude API helper ----------
-const CLAUDE_MODEL = "claude-sonnet-5";
+const CLAUDE_MODEL = process.env.CLAUDE_MODEL || "claude-sonnet-5";
 
 async function callClaude({ system, messages, maxTokens }) {
   if (!process.env.ANTHROPIC_API_KEY) {
@@ -73,6 +73,8 @@ async function callClaude({ system, messages, maxTokens }) {
     err.code = "no_api_key";
     throw err;
   }
+  const body = { model: CLAUDE_MODEL, max_tokens: maxTokens || 4096, messages };
+  if (system) body.system = system;
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -80,12 +82,7 @@ async function callClaude({ system, messages, maxTokens }) {
       "x-api-key": process.env.ANTHROPIC_API_KEY,
       "anthropic-version": "2023-06-01",
     },
-    body: JSON.stringify({
-      model: CLAUDE_MODEL,
-      max_tokens: maxTokens || 4096,
-      system,
-      messages,
-    }),
+    body: JSON.stringify(body),
   });
   const json = await res.json();
   if (!res.ok) {
@@ -93,19 +90,88 @@ async function callClaude({ system, messages, maxTokens }) {
     err.code = "upstream_error";
     throw err;
   }
-  const textBlock = (json.content || []).find((b) => b.type === "text");
-  return textBlock ? textBlock.text : "";
+  const text = (json.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n");
+  const u = json.usage || {};
+  console.log(`[claude] stop=${json.stop_reason} in=${u.input_tokens} out=${u.output_tokens}`);
+  return { text, stop: json.stop_reason };
 }
 
 function extractJson(text) {
   let t = String(text || "").trim();
   t = t.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
   const start = t.search(/[{[]/);
-  const endBrace = t.lastIndexOf("}");
-  const endBracket = t.lastIndexOf("]");
-  const end = Math.max(endBrace, endBracket);
+  const end = Math.max(t.lastIndexOf("}"), t.lastIndexOf("]"));
   if (start === -1 || end === -1) throw new Error("no JSON found in reply");
   return JSON.parse(t.slice(start, end + 1));
+}
+
+// Waxay u dirtaa Claude qayb yar; haddii JSON-ku xumaado mar keliya ayay dib u tijaabisaa.
+async function askJson(prompt, maxTokens, label) {
+  let last = "";
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const r = await callClaude({ messages: [{ role: "user", content: prompt }], maxTokens });
+    try {
+      return extractJson(r.text);
+    } catch (e) {
+      last = r.stop;
+      console.error(`[${label}] attempt ${attempt + 1} failed (stop=${r.stop}): ${e.message}`);
+    }
+  }
+  throw new Error(`Qayb ka mid ah imtixaanka (${label}) ma dhammaystirmin (${last}). Isku day mar kale.`);
+}
+
+function distribute(total, count) {
+  if (count <= 0) return [];
+  const base = Math.floor(total / count);
+  const extra = total - base * count;
+  return Array.from({ length: count }, (_, i) => base + (i >= count - extra ? 1 : 0));
+}
+
+function splitCounts(n, per) {
+  const batches = Math.ceil(n / per);
+  return distribute(n, batches);
+}
+
+function splitText(text, n) {
+  if (n <= 1) return [text];
+  const paras = text.split(/\n\s*\n/);
+  const target = Math.ceil(text.length / n);
+  const out = [];
+  let cur = "";
+  for (const p of paras) {
+    if (cur.length >= target && out.length < n - 1) { out.push(cur); cur = ""; }
+    cur += (cur ? "\n\n" : "") + p;
+  }
+  if (cur) out.push(cur);
+  while (out.length < n) out.push(out[out.length - 1] || text);
+  return out;
+}
+
+const MAX_SOURCE_CHARS = 90000; // ~ xadka qoraalka la dirayo (si lacagta loo ilaaliyo)
+
+function batchPrompt({ kind, n, marksList, textSlice, subject, klass, diagrams, diagramTopics, part, parts }) {
+  const bloom = kind === "mcq"
+    ? "Xusuusnaan, Fahamka, Dabaqid (heerarka hoose iyo dhexe)"
+    : "Dabaqid, Falanqayn, Isku-dar/Abuur, Qiimeyn (heerarka sare); isku dar su'aalo gaagaaban iyo kuwo dhaadheer";
+  const diag = diagrams > 0
+    ? `Waa INUU ku jiraa SI SAX AH ${diagrams} su'aal oo leh sawir \"svg\" (SVG fudud oo cad: <svg viewBox=\"0 0 300 200\" xmlns=\"http://www.w3.org/2000/svg\">...</svg>, khadad iyo xarfo kooban, sida imtixaanada Qaranka: jaantus, shax, geometri, wareegga koronto, iwm). Su'aalaha kale svg waa null.${diagramTopics ? " Mawduucyada la doorbidayo: " + diagramTopics + "." : ""}`
+    : `Dhammaan \"svg\" waa null.`;
+  const shape = kind === "mcq"
+    ? `{"questions":[{"text":"...","options":["A) ...","B) ...","C) ...","D) ..."],"answer":"B) ...","bloom":"Xusuusnaan","svg":null}]}`
+    : `{"questions":[{"text":"... (ha ku dar qeybo a), b), c) haddii ay habboon tahay)","answer":"Jawaab qaab-dhismeed oo kooban + qodobbada dhibcaha","bloom":"Falanqayn","svg":null}]}`;
+  const marksLine = kind === "struct" ? `\nDhibcaha su'aal kasta (si isku xigta): ${marksList.join(", ")}. Su'aalaha dhibcahoodu sarreeyo waa inay noqdaan kuwo ka dhaadheer.` : "";
+  return `Waxaad tahay khabiir diyaarinaya imtixaanada heer-qaran ee Soomaaliya (qaabka Wasaaradda Waxbarashada / Qaranka). Samee ${n} su'aalood oo ${kind === "mcq" ? "ikhtiyaar sax ah (MCQ, 4 doorasho A-D, hal jawaab oo sax ah, doorashooyinka khaldan ha noqdaan kuwo macquul ah)" : "qaab-dhismeed ah"} oo ku saabsan ${subject} (${klass}).
+Heerarka Bloom: ${bloom}.${marksLine}
+Su'aal kasta waa inay ku salaysan tahay KALIYA qoraalka hoose, oo ha is-ku celin. Qoraalku waa qaybta ${part}/${parts} ee casharrada; ka dhig su'aalaha kuwo si fiican u daboola qaybtan.
+${diag}
+
+QORAALKA:
+"""
+${textSlice}
+"""
+
+Soo celi JSON KALIYA (faallo la'aan, code-fence la'aan), Soomaali fasiix ah, tirada su'aalaha waa inay noqotaa ${n}:
+${shape}`;
 }
 
 // ---------- Generate an exam from pasted/extracted lesson text ----------
@@ -124,6 +190,10 @@ app.post("/api/generate-exam", requireAdmin, async (req, res) => {
       lessons = [],
     } = req.body || {};
 
+    const mN = Math.max(0, Math.min(60, parseInt(mcqN, 10) || 0));
+    const sN = Math.max(0, Math.min(30, parseInt(structN, 10) || 0));
+    const total = Math.max(1, parseInt(totalMarks, 10) || 100);
+    if (mN + sN === 0) return res.status(400).json({ error: "questions required" });
     const dCount = Math.max(0, Math.min(10, parseInt(diagramCount, 10) || 0));
     const dTopics = String(diagramTopics || "").trim();
 
@@ -134,60 +204,82 @@ app.post("/api/generate-exam", requireAdmin, async (req, res) => {
       .map((l) => [l.chapter, l.pages ? "Bogga " + l.pages : ""].filter(Boolean).join(" — ") || "Cashar aan magac lahayn")
       .join(" | ");
 
-    const blocksText = cleanLessons
+    let allText = cleanLessons
       .map((l, i) => {
         const tag = [l.chapter || "Cashar " + (i + 1), l.pages ? "Bogga " + l.pages : ""].filter(Boolean).join(" — ");
-        return `### ${tag}\n${l.text}`;
+        return `### ${tag}\n${l.text.trim()}`;
       })
       .join("\n\n");
+    if (allText.length > MAX_SOURCE_CHARS) allText = allText.slice(0, MAX_SOURCE_CHARS);
 
-    const diagramInstr = dCount > 0
-      ? `Waa INUU IMTIXAANKU KU JIRO SI SAX AH ${dCount} sawir/diagram (SVG), sida kuwa ku jira imtixaanada Qaranka Soomaaliya (tusaale: shaxan/jir geometri ah oo cabbirro leh, bilog/jibaarane, jaantus jir-dhiska sida spring/wave, qaab-dhismeedka kiimikada (molecular structure), khadka/qalabka tijaabada koronto ama radioactive detector, khariidad ama graph). Dooro ${dCount} su'aalood oo ka mid ah kuwa ugu habboon qoraalka casharka (kuwaas oo runtii u baahan in lagu sawiro), oo mid kasta ku dar qeyb "svg" oo ay ku jirto SVG qoraal ah oo fudud, cad, oo la fahmi karo: <svg viewBox="0 0 300 200" xmlns="http://www.w3.org/2000/svg">...</svg> (isticmaal khadad/qaab fudud, qoraal ku jira xaruufo/tiro haddii loo baahdo, sida kuwa buugga). Dhammaan su'aalaha kale ee aan ahayn kuwan la doortay, "svg" waa inay ahaadaan null. Ha dhaafin, hana ka badin tirada ${dCount}.${dTopics ? ` Diagrams-ka intii suurtagal ah ha ku saabsanaadeen mawduucyadan: ${dTopics}.` : ""}`
-      : `Ha ku darin wax sawir/diagram ah (svg) su'aal kasta — dhammaan qiyamka "svg" waa inay ahaadaan null.`;
+    // Dhibcaha: MCQ ~40% (ugu badnaan 1 dhibic su'aal kasta haddii suurtagal ah), inta kale qaab-dhismeed
+    const mcqTotal = mN === 0 ? 0 : sN === 0 ? total : Math.min(mN, Math.round(total * 0.4)) || 1;
+    const structTotal = total - mcqTotal;
+    const mcqMarks = distribute(mcqTotal, mN);
+    const structMarks = distribute(structTotal, sN);
 
-    const prompt = `Waxaad tahay khabiir diyaarinaya imtixaanaada dugsiyada sare ee Soomaaliya, oo ku dhaqan qaabka imtixaanada heer-qaran (sida kuwa Puntland/Qaranka Soomaaliya): laba qaybood — Qaybta 1 ikhtiyaar sax ah (multiple choice), Qaybta 2 su'aalo qaab-dhismeed ah (structured/short-answer/essay). Su'aal kasta waa inay ku salaysan tahay oo keliya qoraallada casharrada/cutubyada hoose.
+    const mcqCounts = splitCounts(mN, 10);
+    const structCounts = splitCounts(sN, 4);
 
-Isticmaal Bloom's Taxonomy: xusuusnaan, fahamka, dabaqid, falanqayn, isku-darka/abuur, qiimeyn. Qaybta 1 heerarka hoose, Qaybta 2 heerarka sare.
+    // Sawirrada ku qaybi qaybaha qaab-dhismeedka (haddii aysan jirin, MCQ)
+    const diagTargets = structCounts.length ? structCounts : mcqCounts;
+    const diagAlloc = diagTargets.map(() => 0);
+    for (let i = 0; i < dCount; i++) diagAlloc[i % diagTargets.length]++;
 
-${diagramInstr}
-
-Maadada: ${subject}
-Fasalka: ${klass}
-Tirada su'aalaha ikhtiyaarka (MCQ): ${mcqN}
-Tirada su'aalaha qaab-dhismeedka: ${structN}
-Wadarta dhibcaha: ${totalMarks}
-Waqtiga: ${duration}
-
-CUTUBYADA/CASHARADA (isha kaliya ee su'aalaha ka soo baxaan):
-"""
-${blocksText}
-"""
-
-Soo celi JSON KALIYA (aan faallo ahayn, aan leh calaamado code-fence ah):
-{
- "sections":[
-   {"name":"QAYBTA 1-aad: Ikhtiyaar Sax ah","instructions":"...","marks":<n>,
-    "questions":[{"number":1,"text":"...","marks":1,"bloom":"Xusuusnaan","options":["A) ...","B) ...","C) ...","D) ..."],"svg":null}]},
-   {"name":"QAYBTA 2-aad: Su'aalo Qaab-dhismeed ah","instructions":"...","marks":<n>,
-    "questions":[{"number":11,"text":"...","marks":5,"bloom":"Falanqayn","options":null,"svg":null}]}
- ],
- "answerKey":[{"number":1,"answer":"..."}]
-}
-Hubi tirada su'aalaha iyo wadarta dhibcaha ay sax yihiin, qoraalku Soomaali fasiix ah yahay, aan wax faallo ah oo JSON-ka ka baxsan jirin.`;
-
-    const text = await callClaude({
-      messages: [{ role: "user", content: prompt }],
-      maxTokens: 8000,
+    const jobs = [];
+    let offset = 0;
+    mcqCounts.forEach((n, i) => {
+      const slice = splitText(allText, mcqCounts.length)[i];
+      const d = structCounts.length ? 0 : diagAlloc[i];
+      jobs.push({ kind: "mcq", marks: mcqMarks.slice(offset, offset + n), p: batchPrompt({ kind: "mcq", n, marksList: [], textSlice: slice, subject, klass, diagrams: d, diagramTopics: dTopics, part: i + 1, parts: mcqCounts.length }), max: d ? 6000 : 4000, label: "MCQ " + (i + 1) });
+      offset += n;
     });
-    const data = extractJson(text);
+    offset = 0;
+    structCounts.forEach((n, i) => {
+      const slice = splitText(allText, structCounts.length)[i];
+      const ml = structMarks.slice(offset, offset + n);
+      const d = diagAlloc[i];
+      jobs.push({ kind: "struct", marks: ml, p: batchPrompt({ kind: "struct", n, marksList: ml, textSlice: slice, subject, klass, diagrams: d, diagramTopics: dTopics, part: i + 1, parts: structCounts.length }), max: d ? 7000 : 5000, label: "Qaab-dhismeed " + (i + 1) });
+      offset += n;
+    });
+
+    const results = await Promise.all(jobs.map((j) => askJson(j.p, j.max, j.label)));
+
+    const mkSection = (kind, name, instructions) => {
+      const qs = [];
+      results.forEach((r, i) => {
+        if (jobs[i].kind !== kind) return;
+        (r.questions || []).slice(0, jobs[i].marks.length).forEach((q, k) => qs.push({ ...q, marks: jobs[i].marks[k] }));
+      });
+      return { name, instructions, qs };
+    };
+    const s1 = mkSection("mcq", "QAYBTA 1-aad: Ikhtiyaar Sax ah", "Dooro jawaabta saxda ah ee su'aal kasta. Su'aal kastaa waxay leedahay dhibcaha ka horreeya.");
+    const s2 = mkSection("struct", "QAYBTA 2-aad: Su'aalo Qaab-dhismeed ah", "Ka jawaab dhammaan su'aalaha. Si buuxda u qor jawaabahaaga.");
+
+    let n = 1;
+    const answerKey = [];
+    const sections = [s1, s2]
+      .filter((s) => s.qs.length)
+      .map((s) => ({
+        name: s.name,
+        instructions: s.instructions,
+        marks: s.qs.reduce((a, q) => a + q.marks, 0),
+        questions: s.qs.map((q) => {
+          const number = n++;
+          answerKey.push({ number, answer: q.answer || "" });
+          return { number, text: q.text, marks: q.marks, bloom: q.bloom || "", options: q.options || null, svg: q.svg || null };
+        }),
+      }));
+    const data = { sections, answerKey };
+    const meta = { subject, klass, totalMarks: total, duration, school, sourcesLabel };
 
     const id = crypto.randomUUID();
     await pool.query(
       `INSERT INTO exams (id, subject, class_name, total_marks, duration, sources, data) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-      [id, subject, klass, Number(totalMarks) || 0, duration, sourcesLabel, JSON.stringify({ ...data, meta: { subject, klass, totalMarks, duration, school, sourcesLabel } })]
+      [id, subject, klass, total, duration, sourcesLabel, JSON.stringify({ ...data, meta })]
     );
 
-    res.json({ id, exam: data, meta: { subject, klass, totalMarks, duration, school, sourcesLabel } });
+    res.json({ id, exam: data, meta });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: e.message || "server error" });
@@ -215,11 +307,11 @@ app.post("/api/ocr-pages", requireAdmin, async (req, res) => {
       })),
     ];
 
-    const text = await callClaude({
+    const r = await callClaude({
       messages: [{ role: "user", content }],
       maxTokens: 4096,
     });
-    res.json({ text });
+    res.json({ text: r.text });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: e.message || "server error" });
