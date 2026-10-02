@@ -595,6 +595,163 @@ app.delete("/api/lesson-plans/:id", requireAdmin, async (req, res) => {
   catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
 });
 
+// ---------- Maktabadda Manhajka (buug kasta = fasal + maadada; OCR-kiisa waa la keydiyaa) ----------
+pool.query(`CREATE TABLE IF NOT EXISTS library_books (
+  id TEXT PRIMARY KEY,
+  class_name TEXT NOT NULL DEFAULT '',
+  subject TEXT NOT NULL DEFAULT '',
+  title TEXT NOT NULL DEFAULT '',
+  doc_hash TEXT NOT NULL UNIQUE,
+  num_pages INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT now())`
+).catch((e) => console.error("Library DB init error:", e));
+
+function parseRangeServer(str, max) {
+  const out = new Set();
+  String(str || "").split(",").forEach((part) => {
+    part = part.trim();
+    if (!part) return;
+    const m = part.match(/^(\d+)\s*-\s*(\d+)$/);
+    if (m) {
+      let a = parseInt(m[1], 10), b = parseInt(m[2], 10);
+      if (a > b) [a, b] = [b, a];
+      for (let i = a; i <= b && i <= max; i++) if (i >= 1) out.add(i);
+    } else {
+      const n = parseInt(part, 10);
+      if (n >= 1 && n <= max) out.add(n);
+    }
+  });
+  return Array.from(out).sort((a, b) => a - b);
+}
+
+async function getBook(id) {
+  const { rows } = await pool.query("SELECT * FROM library_books WHERE id=$1", [id]);
+  return rows[0] || null;
+}
+
+// Liiska buugaagta + intee bog ayaa OCR-keeda la keydiyay
+app.get("/api/library", requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT b.id, b.class_name, b.subject, b.title, b.doc_hash, b.num_pages, b.created_at,
+              (SELECT COUNT(*) FROM ocr_pages p WHERE p.doc_hash = b.doc_hash)::int AS pages_done
+         FROM library_books b ORDER BY b.class_name, b.subject, b.title`
+    );
+    res.json(rows);
+  } catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+});
+
+// Diiwaangeli buug (haddii isla faylka hore loo geliyay, xogtiisa waa la cusboonaysiiyaa)
+app.post("/api/library", requireAdmin, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const docHash = String(b.docHash || "").trim();
+    if (!docHash) return res.status(400).json({ error: "docHash required" });
+    const cls = String(b.className || "").trim().slice(0, 60);
+    const subj = String(b.subject || "").trim().slice(0, 100);
+    const title = String(b.title || "").trim().slice(0, 200);
+    const n = Math.max(0, parseInt(b.numPages, 10) || 0);
+    if (!cls || !subj) return res.status(400).json({ error: "Fasalka iyo maadada waa loo baahan yahay." });
+    const id = crypto.randomUUID();
+    const { rows } = await pool.query(
+      `INSERT INTO library_books (id, class_name, subject, title, doc_hash, num_pages)
+       VALUES ($1,$2,$3,$4,$5,$6)
+       ON CONFLICT (doc_hash) DO UPDATE SET class_name=EXCLUDED.class_name, subject=EXCLUDED.subject,
+         title=EXCLUDED.title, num_pages=EXCLUDED.num_pages
+       RETURNING id`,
+      [id, cls, subj, title || subj, docHash, n]
+    );
+    res.json({ id: rows[0].id });
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message || "server error" }); }
+});
+
+// Bogagga hore loo keydiyay (si OCR-ku uga sii socdo halka uu istaagay)
+app.get("/api/library/:id/done", requireAdmin, async (req, res) => {
+  try {
+    const book = await getBook(req.params.id);
+    if (!book) return res.status(404).json({ error: "not found" });
+    const { rows } = await pool.query("SELECT page FROM ocr_pages WHERE doc_hash=$1 ORDER BY page", [book.doc_hash]);
+    res.json({ pages: rows.map((r) => r.page) });
+  } catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+});
+
+// Keydi qoraalka bogagga PDF-ka ee qoraalkoodu horay ugu jiray (OCR looma baahna)
+app.post("/api/library/:id/store-pages", requireAdmin, async (req, res) => {
+  try {
+    const book = await getBook(req.params.id);
+    if (!book) return res.status(404).json({ error: "not found" });
+    const pages = (req.body && req.body.pages) || {};
+    const entries = Object.entries(pages)
+      .map(([k, v]) => [parseInt(k, 10), String(v || "").trim()])
+      .filter(([n, t]) => n >= 1 && t);
+    if (entries.length > 60) return res.status(400).json({ error: "too many pages in one call (max 60)" });
+    for (const [n, t] of entries) {
+      await pool.query(
+        `INSERT INTO ocr_pages (doc_hash, page, doc_name, text) VALUES ($1,$2,$3,$4)
+         ON CONFLICT (doc_hash, page) DO UPDATE SET text=EXCLUDED.text, doc_name=EXCLUDED.doc_name, created_at=now()`,
+        [book.doc_hash, n, book.title.slice(0, 200), t]
+      );
+    }
+    res.json({ stored: entries.length });
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message || "server error" }); }
+});
+
+// Soo qaad qoraalka bogagga (tusaale ?pages=24-31). Haddii bogag aan la qorin, 90k xaraf ee ugu horreeya.
+app.get("/api/library/:id/text", requireAdmin, async (req, res) => {
+  try {
+    const book = await getBook(req.params.id);
+    if (!book) return res.status(404).json({ error: "not found" });
+    const max = book.num_pages || 5000;
+    const asked = String(req.query.pages || "").trim();
+    const nums = asked ? parseRangeServer(asked, max) : null;
+    const { rows } = nums
+      ? await pool.query("SELECT page, text FROM ocr_pages WHERE doc_hash=$1 AND page = ANY($2::int[]) ORDER BY page", [book.doc_hash, nums])
+      : await pool.query("SELECT page, text FROM ocr_pages WHERE doc_hash=$1 ORDER BY page", [book.doc_hash]);
+    let text = rows.map((r) => r.text).join("\n\n");
+    let truncated = false;
+    if (text.length > MAX_SOURCE_CHARS) { text = text.slice(0, MAX_SOURCE_CHARS); truncated = true; }
+    const have = new Set(rows.map((r) => r.page));
+    res.json({
+      text,
+      found: rows.length,
+      requested: nums ? nums.length : rows.length,
+      missing: nums ? nums.filter((n) => !have.has(n)) : [],
+      truncated,
+    });
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message || "server error" }); }
+});
+
+// Raadi cutub/cashar buugga gudihiisa (waxay soo celisaa lambarrada bogagga)
+app.get("/api/library/:id/search", requireAdmin, async (req, res) => {
+  try {
+    const book = await getBook(req.params.id);
+    if (!book) return res.status(404).json({ error: "not found" });
+    const q = String(req.query.q || "").trim().slice(0, 100);
+    if (q.length < 2) return res.json({ hits: [] });
+    const like = "%" + q.replace(/[\\%_]/g, (m) => "\\" + m) + "%";
+    const { rows } = await pool.query(
+      "SELECT page, text FROM ocr_pages WHERE doc_hash=$1 AND text ILIKE $2 ORDER BY page LIMIT 40",
+      [book.doc_hash, like]
+    );
+    const hits = rows.map((r) => {
+      const i = r.text.toLowerCase().indexOf(q.toLowerCase());
+      const s = Math.max(0, i - 40);
+      return { page: r.page, snippet: r.text.slice(s, s + 120).replace(/\s+/g, " ") };
+    });
+    res.json({ hits });
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message || "server error" }); }
+});
+
+app.delete("/api/library/:id", requireAdmin, async (req, res) => {
+  try {
+    const book = await getBook(req.params.id);
+    if (!book) return res.json({ ok: true });
+    await pool.query("DELETE FROM ocr_pages WHERE doc_hash=$1", [book.doc_hash]);
+    await pool.query("DELETE FROM library_books WHERE id=$1", [req.params.id]);
+    res.json({ ok: true });
+  } catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+});
+
 // ---------- Static ----------
 app.use(
   express.static(path.join(__dirname, "public"), {
