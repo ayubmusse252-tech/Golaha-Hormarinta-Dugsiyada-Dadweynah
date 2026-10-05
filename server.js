@@ -953,15 +953,14 @@ app.delete("/api/exams/:id", requireAdmin, async (req, res) => {
 pool.query(`CREATE TABLE IF NOT EXISTS lesson_plans (
   id TEXT PRIMARY KEY, teacher TEXT DEFAULT '', subject TEXT DEFAULT '', class_name TEXT DEFAULT '',
   title TEXT DEFAULT '', data JSONB NOT NULL DEFAULT '{}', created_at TIMESTAMPTZ DEFAULT now())`
-).catch((e) => console.error("LP DB init error:", e));
+).then(() => pool.query(`ALTER TABLE lesson_plans ADD COLUMN IF NOT EXISTS teacher_id TEXT`))
+ .catch((e) => console.error("LP DB init error:", e));
 
-app.post("/api/generate-lesson-plan", requireAdmin, async (req, res) => {
-  try {
-    const b = req.body || {};
+async function createLessonPlan(b, teacherId) {
     const f = (k) => String(b[k] || "").trim();
     const meta = { teacher: f("teacher"), klass: f("klass"), subject: f("subject"), unit: f("unit"), lesson: f("lesson"),
       date: f("date"), day: f("day"), session: f("session"), weekly: f("weekly"), duration: f("duration") || "40 min" };
-    if (!meta.unit && !meta.lesson) return res.status(400).json({ error: "Fadlan geli cutubka ama cinwaanka casharka." });
+    if (!meta.unit && !meta.lesson) { const er = new Error("Fadlan geli cutubka ama cinwaanka casharka."); er.status = 400; throw er; }
     const src = f("text").slice(0, 30000);
     const nGiven = parseInt(b.numObjectives, 10);
     const nObj = nGiven >= 1 ? Math.min(12, nGiven) : 0; // 0 = otomaatig: raac objectives-ka buugga/manhajka
@@ -985,13 +984,18 @@ Return ONLY JSON (no code fences): {"introduction":"","objectives":[""],"methods
     plan.evaluation = (plan.evaluation || []).slice(0, 20);
     const id = crypto.randomUUID();
     await pool.query(
-      `INSERT INTO lesson_plans (id, teacher, subject, class_name, title, data) VALUES ($1,$2,$3,$4,$5,$6)`,
-      [id, meta.teacher, meta.subject, meta.klass, [meta.unit, meta.lesson].filter(Boolean).join(" — "), JSON.stringify({ meta, plan })]
+      `INSERT INTO lesson_plans (id, teacher, subject, class_name, title, data, teacher_id) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [id, meta.teacher, meta.subject, meta.klass, [meta.unit, meta.lesson].filter(Boolean).join(" — "), JSON.stringify({ meta, plan }), teacherId || null]
     );
-    res.json({ id, meta, plan });
+  return { id, meta, plan };
+}
+
+app.post("/api/generate-lesson-plan", requireAdmin, async (req, res) => {
+  try {
+    res.json(await createLessonPlan(req.body || {}, null));
   } catch (e) {
     console.error(e);
-    res.status(500).json({ error: e.message || "server error" });
+    res.status(e.status || 500).json({ error: e.message || "server error" });
   }
 });
 
@@ -1115,48 +1119,56 @@ app.post("/api/library/:id/store-pages", requireAdmin, async (req, res) => {
 });
 
 // Soo qaad qoraalka bogagga (tusaale ?pages=24-31). Haddii bogag aan la qorin, 90k xaraf ee ugu horreeya.
+async function libTextFor(book, asked) {
+  const max = book.num_pages || 5000;
+  asked = String(asked || "").trim();
+  const nums = asked ? parseRangeServer(asked, max) : null;
+  const { rows } = nums
+    ? await pool.query("SELECT page, text FROM ocr_pages WHERE doc_hash=$1 AND page = ANY($2::int[]) ORDER BY page", [book.doc_hash, nums])
+    : await pool.query("SELECT page, text FROM ocr_pages WHERE doc_hash=$1 ORDER BY page", [book.doc_hash]);
+  let text = rows.map((r) => r.text).join("\n\n");
+  let truncated = false;
+  if (text.length > MAX_SOURCE_CHARS) { text = text.slice(0, MAX_SOURCE_CHARS); truncated = true; }
+  const have = new Set(rows.map((r) => r.page));
+  return {
+    text,
+    found: rows.length,
+    requested: nums ? nums.length : rows.length,
+    missing: nums ? nums.filter((n) => !have.has(n)) : [],
+    truncated,
+  };
+}
+
+// Raadi cutub/cashar buugga gudihiisa (waxay soo celisaa lambarrada bogagga)
+async function libSearchFor(book, qRaw) {
+  const q = String(qRaw || "").trim().slice(0, 100);
+  if (q.length < 2) return { hits: [] };
+  const like = "%" + q.replace(/[\\%_]/g, (m) => "\\" + m) + "%";
+  const { rows } = await pool.query(
+    "SELECT page, text FROM ocr_pages WHERE doc_hash=$1 AND text ILIKE $2 ORDER BY page LIMIT 40",
+    [book.doc_hash, like]
+  );
+  const hits = rows.map((r) => {
+    const i = r.text.toLowerCase().indexOf(q.toLowerCase());
+    const st = Math.max(0, i - 40);
+    return { page: r.page, snippet: r.text.slice(st, st + 120).replace(/\s+/g, " ") };
+  });
+  return { hits };
+}
+
 app.get("/api/library/:id/text", requireAdmin, async (req, res) => {
   try {
     const book = await getBook(req.params.id);
     if (!book) return res.status(404).json({ error: "not found" });
-    const max = book.num_pages || 5000;
-    const asked = String(req.query.pages || "").trim();
-    const nums = asked ? parseRangeServer(asked, max) : null;
-    const { rows } = nums
-      ? await pool.query("SELECT page, text FROM ocr_pages WHERE doc_hash=$1 AND page = ANY($2::int[]) ORDER BY page", [book.doc_hash, nums])
-      : await pool.query("SELECT page, text FROM ocr_pages WHERE doc_hash=$1 ORDER BY page", [book.doc_hash]);
-    let text = rows.map((r) => r.text).join("\n\n");
-    let truncated = false;
-    if (text.length > MAX_SOURCE_CHARS) { text = text.slice(0, MAX_SOURCE_CHARS); truncated = true; }
-    const have = new Set(rows.map((r) => r.page));
-    res.json({
-      text,
-      found: rows.length,
-      requested: nums ? nums.length : rows.length,
-      missing: nums ? nums.filter((n) => !have.has(n)) : [],
-      truncated,
-    });
+    res.json(await libTextFor(book, req.query.pages));
   } catch (e) { console.error(e); res.status(500).json({ error: e.message || "server error" }); }
 });
 
-// Raadi cutub/cashar buugga gudihiisa (waxay soo celisaa lambarrada bogagga)
 app.get("/api/library/:id/search", requireAdmin, async (req, res) => {
   try {
     const book = await getBook(req.params.id);
     if (!book) return res.status(404).json({ error: "not found" });
-    const q = String(req.query.q || "").trim().slice(0, 100);
-    if (q.length < 2) return res.json({ hits: [] });
-    const like = "%" + q.replace(/[\\%_]/g, (m) => "\\" + m) + "%";
-    const { rows } = await pool.query(
-      "SELECT page, text FROM ocr_pages WHERE doc_hash=$1 AND text ILIKE $2 ORDER BY page LIMIT 40",
-      [book.doc_hash, like]
-    );
-    const hits = rows.map((r) => {
-      const i = r.text.toLowerCase().indexOf(q.toLowerCase());
-      const s = Math.max(0, i - 40);
-      return { page: r.page, snippet: r.text.slice(s, s + 120).replace(/\s+/g, " ") };
-    });
-    res.json({ hits });
+    res.json(await libSearchFor(book, req.query.q));
   } catch (e) { console.error(e); res.status(500).json({ error: e.message || "server error" }); }
 });
 
@@ -1168,6 +1180,203 @@ app.delete("/api/library/:id", requireAdmin, async (req, res) => {
     await pool.query("DELETE FROM library_books WHERE id=$1", [req.params.id]);
     res.json({ ok: true });
   } catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+});
+
+// ---------- Macallimiinta: user + link gaar ah (fasalo + maaddooyin la fasaxay oo keliya) ----------
+pool.query(`CREATE TABLE IF NOT EXISTS teachers (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  token TEXT NOT NULL UNIQUE,
+  assignments JSONB NOT NULL DEFAULT '[]',
+  active BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ DEFAULT now())`
+).catch((e) => console.error("Teachers DB init error:", e));
+
+const TEACHER_DAILY_LIMIT = parseInt(process.env.TEACHER_DAILY_LIMIT || "30", 10); // lesson plan/maalin/macallin
+const newToken = () => crypto.randomBytes(24).toString("hex"); // 48 xaraf — lama qiyaasi karo
+
+// assignments: [{klass:"Form 1", subject:"Mathematics"}, ...] — nadiifi oo ka saar nuqul
+function cleanAssignments(arr) {
+  const seen = new Set();
+  const out = [];
+  (Array.isArray(arr) ? arr : []).forEach((a) => {
+    const klass = String((a && a.klass) || "").trim().slice(0, 60);
+    const subject = String((a && a.subject) || "").trim().slice(0, 100);
+    if (!klass || !subject) return;
+    const k = klass + "||" + subject;
+    if (seen.has(k)) return;
+    seen.add(k);
+    out.push({ klass, subject });
+  });
+  return out.slice(0, 60);
+}
+const isAllowed = (t, klass, subject) =>
+  (t.assignments || []).some((a) => a.klass === klass && a.subject === subject);
+
+// --- Admin: maamul macallimiinta ---
+app.get("/api/teachers", requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT t.id, t.name, t.token, t.assignments, t.active, t.created_at,
+              (SELECT COUNT(*) FROM lesson_plans l WHERE l.teacher_id = t.id)::int AS plans
+         FROM teachers t ORDER BY t.created_at DESC`
+    );
+    res.json(rows);
+  } catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+});
+
+app.post("/api/teachers", requireAdmin, async (req, res) => {
+  try {
+    const name = String((req.body && req.body.name) || "").trim().slice(0, 100);
+    const assignments = cleanAssignments(req.body && req.body.assignments);
+    if (!name) return res.status(400).json({ error: "Magaca macallinka geli." });
+    if (!assignments.length) return res.status(400).json({ error: "Ku dar ugu yaraan hal fasal + maado." });
+    const id = crypto.randomUUID();
+    const token = newToken();
+    await pool.query(
+      "INSERT INTO teachers (id, name, token, assignments) VALUES ($1,$2,$3,$4)",
+      [id, name, token, JSON.stringify(assignments)]
+    );
+    res.json({ id, token });
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message || "server error" }); }
+});
+
+// Wax ka beddel: magac, fasalo+maaddooyin, daar/damee, ama link cusub (regenerate)
+app.put("/api/teachers/:id", requireAdmin, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const sets = [], vals = [];
+    const add = (col, v) => { vals.push(v); sets.push(`${col}=$${vals.length}`); };
+    if (typeof b.name === "string") {
+      const n = b.name.trim().slice(0, 100);
+      if (!n) return res.status(400).json({ error: "Magaca macallinka geli." });
+      add("name", n);
+    }
+    if (Array.isArray(b.assignments)) {
+      const a = cleanAssignments(b.assignments);
+      if (!a.length) return res.status(400).json({ error: "Ku dar ugu yaraan hal fasal + maado." });
+      add("assignments", JSON.stringify(a));
+    }
+    if (typeof b.active === "boolean") add("active", b.active);
+    if (b.regenerate) add("token", newToken());
+    if (!sets.length) return res.json({ ok: true });
+    vals.push(req.params.id);
+    const { rows } = await pool.query(`UPDATE teachers SET ${sets.join(", ")} WHERE id=$${vals.length} RETURNING token`, vals);
+    if (!rows.length) return res.status(404).json({ error: "not found" });
+    res.json({ ok: true, token: rows[0].token });
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message || "server error" }); }
+});
+
+app.delete("/api/teachers/:id", requireAdmin, async (req, res) => {
+  try {
+    await pool.query("DELETE FROM teachers WHERE id=$1", [req.params.id]);
+    res.json({ ok: true });
+  } catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+});
+
+// --- Macallinka: gelitaanka waxaa lagu hubiyaa token-ka link-ga (header x-teacher-token) ---
+async function requireTeacher(req, res, next) {
+  try {
+    const token = String(req.header("x-teacher-token") || "");
+    if (!/^[a-f0-9]{48}$/.test(token)) return res.status(401).json({ error: "unauthorized" });
+    const { rows } = await pool.query("SELECT * FROM teachers WHERE token=$1 AND active=true", [token]);
+    if (!rows.length) return res.status(401).json({ error: "unauthorized" });
+    req.teacher = rows[0];
+    next();
+  } catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+}
+
+// Buug kaliya haddii fasalkiisa + maadadiisu ku jiraan fasaxa macallinka
+async function teacherBook(req, res) {
+  const book = await getBook(req.params.id);
+  if (!book || !isAllowed(req.teacher, book.class_name, book.subject)) {
+    res.status(404).json({ error: "not found" });
+    return null;
+  }
+  return book;
+}
+
+app.get("/api/t/me", requireTeacher, (req, res) => {
+  res.json({ name: req.teacher.name, assignments: req.teacher.assignments || [] });
+});
+
+app.get("/api/t/library", requireTeacher, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT b.id, b.class_name, b.subject, b.title, b.num_pages,
+              (SELECT COUNT(*) FROM ocr_pages p WHERE p.doc_hash = b.doc_hash)::int AS pages_done
+         FROM library_books b ORDER BY b.class_name, b.subject, b.title`
+    );
+    res.json(rows.filter((r) => isAllowed(req.teacher, r.class_name, r.subject)));
+  } catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+});
+
+app.get("/api/t/library/:id/text", requireTeacher, async (req, res) => {
+  try {
+    const book = await teacherBook(req, res); if (!book) return;
+    res.json(await libTextFor(book, req.query.pages));
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message || "server error" }); }
+});
+
+app.get("/api/t/library/:id/search", requireTeacher, async (req, res) => {
+  try {
+    const book = await teacherBook(req, res); if (!book) return;
+    res.json(await libSearchFor(book, req.query.q));
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message || "server error" }); }
+});
+
+app.post("/api/t/generate-lesson-plan", requireTeacher, async (req, res) => {
+  try {
+    const b = { ...(req.body || {}) };
+    const klass = String(b.klass || "").trim(), subject = String(b.subject || "").trim();
+    // Hubin server-ka dhexdiisa — xitaa haddii cidi bedesho browser-ka
+    if (!isAllowed(req.teacher, klass, subject)) {
+      return res.status(403).json({ error: "Fasalkan ama maadadan lagama fasaxin." });
+    }
+    const { rows } = await pool.query(
+      "SELECT COUNT(*)::int AS n FROM lesson_plans WHERE teacher_id=$1 AND created_at > now() - interval '24 hours'",
+      [req.teacher.id]
+    );
+    if (rows[0].n >= TEACHER_DAILY_LIMIT) {
+      return res.status(429).json({ error: `Xadka maalinlaha ah (${TEACHER_DAILY_LIMIT} lesson plan) waa la gaaray. Berri isku day.` });
+    }
+    b.teacher = req.teacher.name; // magaca macallinka waa laga qaadaa xogta, ma bedeli karo
+    res.json(await createLessonPlan(b, req.teacher.id));
+  } catch (e) {
+    console.error(e);
+    res.status(e.status || 500).json({ error: e.message || "server error" });
+  }
+});
+
+app.get("/api/t/lesson-plans", requireTeacher, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      "SELECT id, subject, class_name, title, created_at FROM lesson_plans WHERE teacher_id=$1 ORDER BY created_at DESC LIMIT 100",
+      [req.teacher.id]
+    );
+    res.json(rows);
+  } catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+});
+app.get("/api/t/lesson-plans/:id", requireTeacher, async (req, res) => {
+  try {
+    const { rows } = await pool.query("SELECT data FROM lesson_plans WHERE id=$1 AND teacher_id=$2", [req.params.id, req.teacher.id]);
+    if (!rows.length) return res.status(404).json({ error: "not found" });
+    res.json(rows[0].data);
+  } catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+});
+app.delete("/api/t/lesson-plans/:id", requireTeacher, async (req, res) => {
+  try {
+    await pool.query("DELETE FROM lesson_plans WHERE id=$1 AND teacher_id=$2", [req.params.id, req.teacher.id]);
+    res.json({ ok: true });
+  } catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+});
+
+// Bogga macallinka: /t/<token>
+app.get("/t/:token", (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("X-Robots-Tag", "noindex, nofollow");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.sendFile(path.join(__dirname, "public", "teacher.html"));
 });
 
 // ---------- Static ----------
