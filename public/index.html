@@ -164,6 +164,7 @@
     <button id="tabExam" class="on" type="button">📝 Imtixaan</button>
     <button id="tabLp" type="button">📘 Lesson Plan + Note</button>
     <button id="tabLib" type="button">📚 Maktabadda</button>
+    <button id="tabTeach" type="button">👩‍🏫 Macallimiin</button>
   </div>
 <div id="examTab">
   <div class="card no-print">
@@ -246,6 +247,30 @@
     <h2>📚 Buugaagta la keydiyay</h2>
     <div class="lib-cls" id="libClsTabs"></div>
     <div id="libList" class="status">Waa la soo dejinayaa...</div>
+  </div>
+</div>
+<div id="teachTab" class="hidden">
+  <div class="card no-print">
+    <h2 id="thFormTitle">👩‍🏫 Macallin cusub</h2>
+    <p class="sub">Samee user macallin, dooro fasalada iyo maaddooyinka aad u fasaxayso, kadibna u dir link-ga. Macallinku wuxuu diyaarin karaa lesson plan <b>kuwa la fasaxay oo keliya</b>.</p>
+    <label>Magaca macallinka</label>
+    <input id="thName" placeholder="tusaale: Cabdi Axmed">
+    <label>Fasalka + maadada la fasaxay</label>
+    <div class="row">
+      <select id="thClass"></select>
+      <select id="thSubject"></select>
+    </div>
+    <button type="button" class="btn-add" id="thAddPair">➕ Ku dar fasalkan + maadadan</button>
+    <div id="thPairs" class="lib-chips" style="margin-top:8px;"></div>
+    <div class="actions">
+      <button type="button" class="btn-primary" id="thSave" style="margin-top:10px;">🔗 Samee Link-ga Macallinka</button>
+      <button type="button" class="btn-ghost hidden" id="thCancel" style="margin-top:10px;">Jooji</button>
+    </div>
+    <div class="err hidden" id="thErr"></div>
+  </div>
+  <div class="card no-print">
+    <h2>📋 Macallimiinta</h2>
+    <div id="thList" class="status">Waa la soo dejinayaa...</div>
   </div>
 </div>
 <div id="lpTab" class="hidden">
@@ -951,15 +976,19 @@
     $("examTab").classList.toggle("hidden", name!=="exam");
     $("lpTab").classList.toggle("hidden", name!=="lp");
     $("libTab").classList.toggle("hidden", name!=="lib");
+    $("teachTab").classList.toggle("hidden", name!=="teach");
+    $("tabTeach").classList.toggle("on", name==="teach");
     $("tabExam").classList.toggle("on", name==="exam");
     $("tabLp").classList.toggle("on", name==="lp");
     $("tabLib").classList.toggle("on", name==="lib");
     if (name==="lp") lpLoadList();
     if (name==="lib") libLoad();
+    if (name==="teach") thLoad();
   }
   $("tabExam").addEventListener("click", ()=>showTab("exam"));
   $("tabLp").addEventListener("click", ()=>showTab("lp"));
   $("tabLib").addEventListener("click", ()=>showTab("lib"));
+  $("tabTeach").addEventListener("click", ()=>showTab("teach"));
   initPicker(document.querySelector('.lib-pick[data-pick="lp"]'), {
     pages: ()=>document.querySelector('.lib-pick[data-pick="lp"] .lib-pages'),
     text: ()=>$("lpText"), subject: ()=>$("lpSubject"), klass: ()=>$("lpClass")
@@ -1038,6 +1067,108 @@
     finally { $("lpGen").disabled = false; }
   });
   $("lpPrint").addEventListener("click", ()=>window.print());
+
+  // ---------- Macallimiin (user + link) ----------
+  let thPairs = [];      // [{klass, subject}] ee foomka
+  let thEditId = null;   // haddii wax laga beddelayo macallin jira
+  let thRows = [];
+  const thLink = t => location.origin + "/t/" + t;
+
+  function thFillSelects(){
+    const classes = Array.from(new Set(["Form 1","Form 2","Form 3","Form 4"].concat(libBooks.map(b=>b.class_name)))).sort();
+    const subjects = Array.from(new Set(DEFAULT_SUBJECTS.concat(libBooks.map(b=>b.subject)))).sort();
+    const keep = id => $(id).value;
+    const c = keep("thClass"), s2 = keep("thSubject");
+    $("thClass").innerHTML = classes.map(x=>`<option>${esc(x)}</option>`).join("");
+    $("thSubject").innerHTML = subjects.map(x=>`<option>${esc(x)}</option>`).join("");
+    if (c) $("thClass").value = c;
+    if (s2) $("thSubject").value = s2;
+  }
+  function thRenderPairs(){
+    $("thPairs").innerHTML = thPairs.length ? thPairs.map((p,i)=>
+      `<button type="button" class="btn-ghost" data-rm="${i}">${esc(p.klass)} · ${esc(p.subject)} ✕</button>`).join("")
+      : '<span class="hint">Wali wax lama darin.</span>';
+    $("thPairs").querySelectorAll("[data-rm]").forEach(b=>b.addEventListener("click", ()=>{
+      thPairs.splice(+b.dataset.rm,1); thRenderPairs();
+    }));
+  }
+  function thReset(){
+    thEditId = null; thPairs = []; $("thName").value = "";
+    $("thFormTitle").textContent = "👩‍🏫 Macallin cusub";
+    $("thSave").textContent = "🔗 Samee Link-ga Macallinka";
+    $("thCancel").classList.add("hidden"); $("thErr").classList.add("hidden");
+    thRenderPairs();
+  }
+  $("thAddPair").addEventListener("click", ()=>{
+    const klass = $("thClass").value, subject = $("thSubject").value;
+    if (!klass || !subject) return;
+    if (!thPairs.some(p=>p.klass===klass && p.subject===subject)) thPairs.push({klass, subject});
+    thRenderPairs();
+  });
+  $("thCancel").addEventListener("click", thReset);
+  $("thSave").addEventListener("click", async ()=>{
+    const err = $("thErr"); err.classList.add("hidden");
+    // haddii uu doortay laakiin aanu "Ku dar" taaban, si toos ah ugu dar
+    const klass = $("thClass").value, subject = $("thSubject").value;
+    if (!thPairs.length && klass && subject) thPairs.push({klass, subject});
+    const name = $("thName").value.trim();
+    if (!name){ err.textContent = "⚠️ Geli magaca macallinka."; err.classList.remove("hidden"); return; }
+    if (!thPairs.length){ err.textContent = "⚠️ Ku dar ugu yaraan hal fasal + maado."; err.classList.remove("hidden"); return; }
+    $("thSave").disabled = true;
+    try{
+      if (thEditId) await api("/api/teachers/"+thEditId, {method:"PUT", body: JSON.stringify({name, assignments: thPairs})});
+      else await api("/api/teachers", {method:"POST", body: JSON.stringify({name, assignments: thPairs})});
+      thReset(); await thLoad();
+    } catch(e){ err.textContent = "⚠️ " + e.message; err.classList.remove("hidden"); }
+    finally { $("thSave").disabled = false; }
+  });
+
+  async function thCopy(text, btn){
+    try{ await navigator.clipboard.writeText(text); }
+    catch(e){ const i = document.createElement("input"); i.value = text; document.body.appendChild(i); i.select(); document.execCommand("copy"); i.remove(); }
+    const old = btn.textContent; btn.textContent = "✅ La koobiyay"; setTimeout(()=>btn.textContent = old, 1500);
+  }
+
+  async function thLoad(){
+    thFillSelects(); if (!thEditId) thRenderPairs();
+    const el = $("thList");
+    try{
+      thRows = await api("/api/teachers");
+      if (!thRows.length){ el.textContent = "Wali macallin lama darin."; return; }
+      el.innerHTML = thRows.map(t=>`<div class="lesson" style="${t.active?'':'opacity:.6;'}">
+        <div class="lesson-top"><b>${esc(t.name)}</b>${t.active?'':' <span class="hint">(la damiyay)</span>'}
+          <span class="hint" style="margin-left:auto;">${t.plans} lesson plan</span></div>
+        <div class="lib-chips" style="margin:0 0 8px;">${(t.assignments||[]).map(a=>`<span class="bloom-tag" style="display:inline-block;font-size:.74rem;">${esc(a.klass)} · ${esc(a.subject)}</span>`).join("")}</div>
+        <input readonly value="${esc(thLink(t.token))}" onclick="this.select()" style="font-size:.78rem;margin-bottom:8px;">
+        <div class="actions" style="flex-wrap:wrap;">
+          <button class="btn-ghost" data-cp="${t.id}">📋 Koobi link-ga</button>
+          <button class="btn-ghost" data-ed="${t.id}">✏️ Wax ka beddel</button>
+          <button class="btn-ghost" data-tg="${t.id}">${t.active?'⏸ Dami':'▶️ Daar'}</button>
+          <button class="btn-ghost" data-rg="${t.id}">🔄 Link cusub</button>
+          <button class="btn-ghost" data-dl="${t.id}" style="color:var(--bad);">🗑️</button>
+        </div></div>`).join("");
+      const byId = id => thRows.find(x=>x.id===id);
+      el.querySelectorAll("[data-cp]").forEach(b=>b.addEventListener("click", ()=>thCopy(thLink(byId(b.dataset.cp).token), b)));
+      el.querySelectorAll("[data-ed]").forEach(b=>b.addEventListener("click", ()=>{
+        const t = byId(b.dataset.ed); thEditId = t.id; thPairs = (t.assignments||[]).map(a=>({klass:a.klass, subject:a.subject}));
+        $("thName").value = t.name; $("thFormTitle").textContent = "✏️ Wax ka beddel: " + t.name;
+        $("thSave").textContent = "💾 Keydi isbeddelka"; $("thCancel").classList.remove("hidden");
+        thRenderPairs(); $("thName").scrollIntoView({behavior:"smooth"});
+      }));
+      el.querySelectorAll("[data-tg]").forEach(b=>b.addEventListener("click", async ()=>{
+        const t = byId(b.dataset.tg);
+        await api("/api/teachers/"+t.id, {method:"PUT", body: JSON.stringify({active: !t.active})}); thLoad();
+      }));
+      el.querySelectorAll("[data-rg]").forEach(b=>b.addEventListener("click", async ()=>{
+        if (!confirm("Link-ga hore wuu shaqayn waayayaa. Ma samaynaa link cusub?")) return;
+        await api("/api/teachers/"+b.dataset.rg, {method:"PUT", body: JSON.stringify({regenerate:true})}); thLoad();
+      }));
+      el.querySelectorAll("[data-dl]").forEach(b=>b.addEventListener("click", async ()=>{
+        if (!confirm("Ma hubtaa inaad tirtirto macallinkan? Link-giisa wuu shaqayn waayayaa.")) return;
+        await api("/api/teachers/"+b.dataset.dl, {method:"DELETE"}); thLoad();
+      }));
+    } catch(e){ el.textContent = "⚠️ Khalad soo dejin ah."; }
+  }
 
   boot();
 })();
