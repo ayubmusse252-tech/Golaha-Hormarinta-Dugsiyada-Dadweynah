@@ -458,8 +458,8 @@ const LABELS = {
     blankName: "2. Buuxi Meelaha Banaan",
     blankInstr: "Ku buuxi meesha banaan ereyga ama weedha saxda ah.",
     matchName: "3. Isku Aad",
-    matchInstr: "Ku aad shayga Tiirka A ee la socda Tiirka B (ku qor xarafka saxda ah).",
-    matchPrompt: "Ku aad Tiirka A iyo Tiirka B:", colA: "Tiirka A", colB: "Tiirka B",
+    matchInstr: "Ku aad shayga Tiirka A ee la socda Tiirka B (ku qor lambarka saxda ah ee Tiirka A goobta Jawaab).",
+    matchPrompt: "Ku aad Tiirka A iyo Tiirka B:", colA: "Tiirka A", colB: "Tiirka B", answerWord: "Jawaab",
     structName: "QAYBTA B: Su'aalo Qaab-dhismeed ah",
     structInstr: "Ka jawaab dhammaan su'aalaha. Si buuxda u qor jawaabahaaga.",
     defSubject: "Maadada", defClass: "Fasalka", defDuration: "2 saac", defSchool: "Imtixaanka Maadada",
@@ -477,8 +477,8 @@ const LABELS = {
     blankName: "2. Fill in the Blanks",
     blankInstr: "Fill in each blank with the correct word or phrase.",
     matchName: "3. Matching",
-    matchInstr: "Match each item in Column A with its pair in Column B (write the correct letter).",
-    matchPrompt: "Match Column A with Column B:", colA: "Column A", colB: "Column B",
+    matchInstr: "Match each item in Column A with its pair in Column B (write the matching number from Column A in the Answer space).",
+    matchPrompt: "Match Column A with Column B:", colA: "Column A", colB: "Column B", answerWord: "Answer",
     structName: "SECTION B: Structured Questions",
     structInstr: "Answer all questions. Write your answers in full.",
     defSubject: "Subject", defClass: "Class", defDuration: "2 hours", defSchool: "Subject Examination",
@@ -496,8 +496,8 @@ const LABELS = {
     blankName: "٢. أكمل الفراغات",
     blankInstr: "أكمل كل فراغ بالكلمة أو العبارة الصحيحة.",
     matchName: "٣. المزاوجة",
-    matchInstr: "صِل كل عنصر في العمود (أ) بما يناسبه في العمود (ب) (اكتب الحرف الصحيح).",
-    matchPrompt: "صِل بين العمود (أ) والعمود (ب):", colA: "العمود (أ)", colB: "العمود (ب)",
+    matchInstr: "صِل كل عنصر في العمود (أ) بما يناسبه في العمود (ب) (اكتب رقم العنصر الصحيح من العمود (أ) في خانة الإجابة).",
+    matchPrompt: "صِل بين العمود (أ) والعمود (ب):", colA: "العمود (أ)", colB: "العمود (ب)", answerWord: "الإجابة",
     structName: "القسم ب: الأسئلة المقالية",
     structInstr: "أجب عن جميع الأسئلة. اكتب إجاباتك كاملة.",
     defSubject: "المادة", defClass: "الصف", defDuration: "ساعتان", defSchool: "امتحان المادة",
@@ -573,13 +573,13 @@ function batchPrompt({ kind, n, marksList, textSlice, subject, klass, diagrams, 
   const kindDesc = {
     mcq: "multiple-choice questions (4 options A-D, exactly one correct answer, plausible distractors)",
     blank: `fill-in-the-blank questions: each is ONE complete sentence taken from the lesson in which exactly ONE key term, number or short phrase (1-3 words) is replaced by "__________" (ten underscores). The blank must have a single clear correct answer; do not blank out trivial words`,
-    match: `matching questions: each question is a set of EXACTLY ${MATCH_PAIRS} pairs (term ↔ its definition / function / example / meaning) taken from the lesson. Keep every item short (max ~12 words), every left item must match exactly one right item, and no two pairs may be confusable`,
+    match: `matching questions: each question is a set of EXACTLY ${MATCH_PAIRS} pairs (term ↔ its definition / function / example / meaning) taken from the lesson. Keep every item short (max ~12 words), every left item must match exactly one right item, and no two pairs may be confusable. ALSO add ONE extra plausible-but-wrong right-hand option per set in the field "extra" (it matches none of the left items; same style and length as the other right items)`,
     struct: "structured questions",
   }[kind];
   const shape = {
     mcq: `{"questions":[{"text":"...","options":["A) ...","B) ...","C) ...","D) ..."],"answer":"B) ...","bloom":"Remember","svg":null}]}`,
     blank: `{"questions":[{"text":"The __________ is responsible for ...","answer":"the missing word(s)","bloom":"Remember","svg":null}]}`,
-    match: `{"questions":[{"pairs":[{"left":"term 1","right":"its match 1"},{"left":"term 2","right":"its match 2"},{"left":"term 3","right":"its match 3"},{"left":"term 4","right":"its match 4"},{"left":"term 5","right":"its match 5"}],"bloom":"Remember","svg":null}]}`,
+    match: `{"questions":[{"pairs":[{"left":"term 1","right":"its match 1"},{"left":"term 2","right":"its match 2"},{"left":"term 3","right":"its match 3"},{"left":"term 4","right":"its match 4"},{"left":"term 5","right":"its match 5"}],"extra":"one extra wrong option","bloom":"Remember","svg":null}]}`,
     struct: `{"questions":[{"text":"... (add parts a), b), c) when appropriate)","answer":"Short model answer + marking points","bloom":"Analyze","svg":null}]}`,
   }[kind];
   const unit = kind === "match" ? "matching sets" : "questions";
@@ -728,25 +728,43 @@ app.post("/api/generate-exam", requireAdmin, async (req, res) => {
     addJobs("match", matchCounts, matchMarks, 3000, "Match");
     addJobs("struct", structCounts, structMarks, 5000, "Struct", (i) => diagAlloc[i]);
 
-    const results = await Promise.all(jobs.map((j) => askJson(j.p, j.max, j.label)));
+    const runJob = (j) => askJson(j.p, j.max, j.label).catch((e) => { console.error("[job failed]", j.label, e.message); return { questions: [] }; });
+    const results = await Promise.all(jobs.map(runJob));
+
+    // Haddii nooc ka mid ah (MCQ, banaan, isku-aad, qaab-dhismeed) uu ka yaraado intii la rabay, mar kale ku buuxi.
+    const wanted = { mcq: mN, blank: fN, match: xN, struct: sN };
+    const okQ = (kind, q) => (kind === "match" ? Array.isArray(q.pairs) && q.pairs.filter((p) => p && p.left && p.right).length >= 2 : !!(q && q.text));
+    const gotKind = (kind) => results.reduce((a, r, i) => a + (jobs[i].kind === kind ? (r.questions || []).slice(0, jobs[i].marks.length).filter((q) => okQ(kind, q)).length : 0), 0);
+    for (const kind of ["mcq", "blank", "match", "struct"]) {
+      for (let round = 0; round < 2; round++) {
+        const missing = wanted[kind] - gotKind(kind);
+        if (missing <= 0) break;
+        const j = { kind, marks: Array(missing).fill(1), label: kind + " top-up" };
+        j.p = batchPrompt({ kind, n: missing, marksList: j.marks, textSlice: allText, subject: subjectF, klass: klassF, diagrams: 0, diagramTopics: "", part: 1, parts: 1, langName, forced: !!forced });
+        j.max = kind === "struct" ? 5000 : 3500;
+        jobs.push(j);
+        results.push(await runJob(j));
+      }
+    }
 
     // Soo ururi su'aalaha nooc kasta (oo dhibcahooda leh)
     const collect = (kind) => {
       const qs = [];
       results.forEach((r, i) => {
         if (jobs[i].kind !== kind) return;
-        (r.questions || []).slice(0, jobs[i].marks.length).forEach((q, k) => {
+        (r.questions || []).slice(0, jobs[i].marks.length).filter((q) => okQ(kind, q)).forEach((q, k) => {
           const marks = jobs[i].marks[k];
           if (kind === "match") {
             const pairs = (Array.isArray(q.pairs) ? q.pairs : []).filter((p) => p && p.left && p.right).slice(0, 8);
             if (pairs.length < 2) return;
-            const rightShuffled = shuffled(pairs.map((p) => String(p.right)));
+            const extra = q.extra && String(q.extra).trim() && !pairs.some((p) => String(p.right) === String(q.extra)) ? [String(q.extra).trim()] : [];
+            const rightShuffled = shuffled([...pairs.map((p) => String(p.right)), ...extra]);
             const letters = "ABCDEFGHIJ";
-            const ans = pairs.map((p, idx) => `${idx + 1}-${letters[rightShuffled.indexOf(String(p.right))]}`).join(", ");
+            const ans = rightShuffled.map((r, ri) => { const li = pairs.findIndex((p) => String(p.right) === r); return `${ri + 1}) ${r} → ${li >= 0 ? li + 1 : "—"}`; }).join(" | ");
             qs.push({
               type: "match", marks, bloom: q.bloom || "", svg: null, answer: ans,
               text: L.matchPrompt,
-              match: { left: pairs.map((p) => String(p.left)), right: rightShuffled, colA: L.colA, colB: L.colB },
+              match: { left: pairs.map((p) => String(p.left)), right: rightShuffled, colA: L.colA, colB: L.colB, ans: L.answerWord },
             });
           } else {
             qs.push({ ...q, type: kind, marks });
