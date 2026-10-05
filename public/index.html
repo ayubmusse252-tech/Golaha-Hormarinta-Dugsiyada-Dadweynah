@@ -54,7 +54,7 @@
   .match-tbl th,.match-tbl td{border:1px solid #444;padding:5px 7px;vertical-align:middle;text-align:start;}
   .match-tbl th{background:var(--surface2);font-size:.82rem;}
   .match-tbl .mn{width:28px;text-align:center;font-weight:700;}
-  .match-tbl .ma{width:64px;}
+  .match-tbl .ma{width:80px;}
   .bloom-tag{display:inline-block;background:var(--surface2);color:var(--dim);font-size:.68rem;padding:1px 7px;border-radius:20px;margin-left:6px;vertical-align:middle;}
   .answerkey{margin-top:20px;border-top:1px dashed var(--border);padding-top:12px;}
   .answerkey summary{cursor:pointer;font-weight:700;font-size:.88rem;color:var(--accent);}
@@ -911,9 +911,9 @@
         if (q.options && q.options.length) html += `<div class="opts">` + q.options.map(o=>`<div>${esc(o)}</div>`).join("") + `</div>`;
         if (q.match && q.match.left && q.match.right){
           const L2 = q.match.left, R2 = q.match.right, rows = Math.max(L2.length, R2.length);
-          html += `<table class="match-tbl"><thead><tr><th class="mn">#</th><th>${esc(q.match.colA||"A")}</th><th class="ma">${rtl?"الجواب":"Jawaab"}</th><th class="mn">&nbsp;</th><th>${esc(q.match.colB||"B")}</th></tr></thead><tbody>`;
+          html += `<table class="match-tbl"><thead><tr><th class="mn">#</th><th>${esc(q.match.colA||"A")}</th><th class="ma">${esc(q.match.ans||"Answer")}</th><th>${esc(q.match.colB||"B")}</th></tr></thead><tbody>`;
           for (let i=0;i<rows;i++){
-            html += `<tr><td class="mn">${L2[i]!==undefined ? (i+1) : ""}</td><td>${L2[i]!==undefined ? esc(L2[i]) : ""}</td><td class="ma">${L2[i]!==undefined ? "" : ""}</td><td class="mn">${R2[i]!==undefined ? String.fromCharCode(65+i) : ""}</td><td>${R2[i]!==undefined ? esc(R2[i]) : ""}</td></tr>`;
+            html += `<tr><td class="mn">${L2[i]!==undefined ? (i+1) : ""}</td><td>${L2[i]!==undefined ? esc(L2[i]) : ""}</td><td class="ma"></td><td>${R2[i]!==undefined ? esc(R2[i]) : ""}</td></tr>`;
           }
           html += `</tbody></table>`;
         }
