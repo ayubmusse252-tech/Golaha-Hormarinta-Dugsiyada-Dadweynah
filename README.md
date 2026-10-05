@@ -33,6 +33,17 @@ Tab cusub oo **📚 Maktabadda** ah ayaa laga helaa bogga sare. Halkaas ka geli 
 - Haddii OCR-ku istaago ama khalad dhaco, mar kale geli isla faylka: boggagga hore loo dhammeeyay waa la ordayaa, kuwa hadhay oo keliya ayaa la akhriyaa.
 - **Lesson Plan** iyo **Imtixaan** labadaba waxay leeyihiin sanduuqa **📚 Ka qaado Maktabadda**: dooro buugga, geli bogagga (24-31) ama raadi cutubka/casharka, taabo "Soo qaado qoraalka" — OCR kale looma baahna.
 
+## 👩‍🏫 Macallimiin (user + link gaar ah)
+
+Tab cusub oo **👩‍🏫 Macallimiin** ah (maamulka oo keliya):
+
+1. Geli magaca macallinka, dooro **fasal + maado** oo taabo "➕ Ku dar" (waad ku dari kartaa dhowr lammaane: tusaale Form 1 · Mathematics, Form 2 · Physics).
+2. Taabo **🔗 Samee Link-ga Macallinka** — link gaar ah ayaa abuurmaya (`https://app-kaaga/t/<token>`). Koobi oo u dir (WhatsApp, iwm). Sir/password looma baahna — link-ga ayaa isagu furaha ah.
+3. Macallinku link-ga ayuu furaa wuxuuna arkaa **fasalada + maaddooyinka la fasaxay oo keliya**: wuxuu diyaarin karaa Lesson Plan + Note, wuxuu ka qaadan karaa Maktabadda buugaagta maadadiisa, wuxuuna arkaa lesson plan-kiisa oo keliya.
+4. Maamulku wuu: ✏️ wax ka beddeli karaa fasalada/maaddooyinka, ⏸ damin karaa, 🔄 link cusub samayn karaa (kii hore wuu dhacayaa), 🗑️ tirtiri karaa.
+
+**Amniga**: fasalka+maadada waa lagu hubiyaa *server-ka* (ma aha browser-ka oo keliya); macallinku ma geli karo Imtixaan, Maktabadda oo dhan, ama lesson plan-ka macallimiin kale. Magaca macallinka waxaa laga qaadaa xogta (ma bedeli karo). Xadka maalinlaha ah: 30 lesson plan/macallin (beddel: `TEACHER_DAILY_LIMIT`).
+
 ## Local development
 
 ```
