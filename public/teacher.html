@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="so">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Lesson Plan — Macallinka</title>
+<style>
+  :root{
+    --bg:#f4f5f7; --surface:#fff; --surface2:#eef0f3; --border:#d9dce2;
+    --text:#1b1f27; --dim:#5c6370; --accent:#1e4fa3; --accent2:#163d82;
+    --good:#1e8e5a; --bad:#c0392b; --radius:12px;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;}
+  .wrap{max-width:780px;margin:0 auto;padding:16px 14px 60px;}
+  h1{font-size:1.25rem;margin:4px 0 2px;}
+  h2{font-size:1.05rem;margin:0 0 10px;}
+  .sub{color:var(--dim);font-size:.85rem;margin:0 0 16px;}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:14px;}
+  label{display:block;font-size:.82rem;font-weight:600;margin:10px 0 4px;}
+  textarea,input,select{width:100%;padding:10px 11px;border-radius:9px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:.92rem;font-family:inherit;}
+  textarea{min-height:110px;resize:vertical;line-height:1.4;}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  .row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;}
+  @media (max-width:480px){ .row3{grid-template-columns:1fr 1fr;} }
+  button{cursor:pointer;border:none;border-radius:9px;font-weight:700;font-size:.92rem;padding:12px 16px;}
+  .btn-primary{background:var(--accent);color:#fff;width:100%;margin-top:14px;}
+  .btn-primary:disabled{opacity:.6;cursor:default;}
+  .btn-ghost{background:var(--surface2);color:var(--text);border:1px solid var(--border);}
+  .actions{display:flex;gap:8px;margin-top:10px;}
+  .actions button{flex:1;}
+  .status{font-size:.82rem;color:var(--dim);margin-top:8px;min-height:1.2em;}
+  .err{color:var(--bad);font-size:.85rem;margin-top:8px;}
+  .hidden{display:none !important;}
+  #examOutput{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin-top:4px;}
+  .ex-head{text-align:center;border-bottom:2px solid var(--text);padding-bottom:10px;margin-bottom:14px;}
+  .ex-head h2{margin:0 0 4px;font-size:1.1rem;}
+  .ex-head .meta{font-size:.85rem;color:var(--dim);}
+  .ex-fields{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:.85rem;margin-bottom:16px;}
+  .ex-fields span{border-bottom:1px solid var(--border);padding-bottom:2px;}
+  .ex-sources{font-size:.75rem;color:var(--dim);text-align:center;margin:-6px 0 14px;}
+  .ex-section-title{font-weight:700;margin:18px 0 6px;font-size:.95rem;border-bottom:1px solid var(--border);padding-bottom:4px;}
+  .ex-instr{font-size:.82rem;color:var(--dim);margin-bottom:8px;font-style:italic;}
+  .q{margin-bottom:12px;font-size:.92rem;line-height:1.5;}
+  .q b{margin-right:4px;}
+  .q .marks{float:left;color:var(--accent);font-size:.78rem;margin-right:6px;}
+  .q-diagram{margin:8px 0 8px 18px;max-width:280px;}
+  .q-diagram svg{width:100%;height:auto;border:1px solid var(--border);border-radius:6px;background:#fff;}
+  .opts{margin:4px 0 0 18px;font-size:.88rem;}
+  .opts div{margin-bottom:2px;}
+  .ex-sub{font-weight:700;font-size:.9rem;margin:14px 0 2px;}
+  .ex-sub-instr{font-size:.8rem;color:var(--dim);font-style:italic;margin-bottom:6px;}
+  .match-tbl{width:100%;border-collapse:collapse;margin:8px 0 0;font-size:.88rem;}
+  .match-tbl th,.match-tbl td{border:1px solid #444;padding:5px 7px;vertical-align:middle;text-align:start;}
+  .match-tbl th{background:var(--surface2);font-size:.82rem;}
+  .match-tbl .mn{width:28px;text-align:center;font-weight:700;}
+  .match-tbl .ma{width:80px;}
+  .bloom-tag{display:inline-block;background:var(--surface2);color:var(--dim);font-size:.68rem;padding:1px 7px;border-radius:20px;margin-left:6px;vertical-align:middle;}
+  .answerkey{margin-top:20px;border-top:1px dashed var(--border);padding-top:12px;}
+  .answerkey summary{cursor:pointer;font-weight:700;font-size:.88rem;color:var(--accent);}
+  .answerkey ol{font-size:.85rem;padding-left:20px;}
+  .lesson{border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:10px;background:var(--surface2);}
+  .lesson-top{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
+  .lesson-top label{display:flex;align-items:center;gap:6px;margin:0;font-size:.8rem;white-space:nowrap;}
+  .lesson-top input[type=checkbox]{width:auto;}
+  .lesson .row2{display:grid;grid-template-columns:2fr 1fr;gap:8px;margin-bottom:6px;}
+  .lesson .rm{background:transparent;color:var(--bad);border:1px solid var(--bad);padding:4px 10px;font-size:.75rem;margin-left:auto;}
+  .l-upload{display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap;}
+  .l-upload input[type=file]{width:auto;flex:1;min-width:160px;font-size:.78rem;padding:6px;}
+  .l-filestatus{font-size:.72rem;color:var(--dim);}
+  .l-ocr{background:var(--accent);color:#fff;font-size:.72rem;padding:4px 10px;display:none;}
+  .btn-add{background:var(--surface2);color:var(--accent);border:1px dashed var(--accent);width:100%;margin-top:4px;}
+  .diagram-toggle{display:flex;align-items:center;gap:8px;margin-top:4px;font-size:.85rem;}
+  .diagram-toggle input{width:auto;}
+  #loginScreen{max-width:320px;margin:70px auto;text-align:center;}
+  #loginScreen input{margin-bottom:10px;}
+  .saved-item{display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--border);font-size:.86rem;gap:8px;}
+  .saved-item:last-child{border-bottom:none;}
+  .saved-item .meta{color:var(--dim);font-size:.75rem;}
+  .saved-item .sv-btns{display:flex;gap:6px;flex-shrink:0;}
+  .saved-item button{padding:5px 9px;font-size:.72rem;}
+  #examOutput[dir=rtl]{text-align:right;}
+  #examOutput[dir=rtl] .q .marks{float:right;margin-right:0;margin-left:6px;}
+  #examOutput[dir=rtl] .opts{margin:4px 18px 0 0;}
+  #examOutput[dir=rtl] .q-diagram{margin:8px 18px 8px 0;}
+  #examOutput[dir=rtl] .bloom-tag{margin-left:0;margin-right:6px;}
+  .hint{font-size:.74rem;color:var(--dim);margin-top:3px;font-weight:400;}
+  .tabs{display:flex;gap:8px;margin:0 0 14px;}
+  .tabs button{flex:1;background:var(--surface2);color:var(--text);border:1px solid var(--border);}
+  .tabs button.on{background:var(--accent);color:#fff;border-color:var(--accent);}
+  #lpOut{margin-top:4px;}
+  .lp-page{background:#fff;border:1px solid var(--border);padding:12px;margin-bottom:14px;font-family:"Times New Roman",serif;font-size:.85rem;color:#000;}
+  .lp-img{width:100%;display:block;}
+  .lp-title{text-align:center;font-size:1.3rem;margin:4px 0 6px;font-family:Arial,sans-serif;}
+  .lp-grid{border:1px solid #000;}
+  .lp-h{text-align:center;font-weight:700;border-top:1px solid #000;border-bottom:1px solid #000;padding:3px;}
+  .lp-c{padding:4px 6px;}
+  .lp-v{padding:4px 8px;min-height:30px;line-height:1.45;}
+  .lp-info{display:flex;border-top:1px solid #000;}
+  .lp-info>div{flex:1 1 0;min-width:0;border-right:1px solid #000;text-align:center;}
+  .lp-info>div:last-child{border-right:none;} .lp-info>div.w{flex:2.2 1 0;}
+  .lp-info .il{font-weight:700;border-bottom:1px solid #000;padding:2px 3px;font-size:.9em;}
+  .lp-info .iv{padding:3px 4px;min-height:22px;overflow-wrap:anywhere;}
+  .lp-ev{display:grid;grid-template-columns:1fr 1fr;gap:4px 14px;}
+  .lp-tt{width:100%;border-collapse:collapse;border:1px solid #000;border-top:none;}
+  .lp-tt th,.lp-tt td{border:1px solid #000;padding:4px 8px;text-align:left;}
+  .lp-tt th{background:#f1f1f1;} .lp-tt .c{text-align:center;width:90px;}
+  .lp-note{border:1px solid #000;padding:10px 14px;line-height:1.55;}
+  .lp-nh2{text-align:center;font-weight:700;font-size:1rem;margin-bottom:8px;}
+  .lp-nh{font-weight:700;margin-top:8px;} .lp-note p{margin:2px 0;}
+  .lp-tmw{break-inside:avoid;page-break-inside:avoid;} .lp-tt tr{break-inside:avoid;page-break-inside:avoid;}
+  .lp-sign{display:flex;justify-content:space-between;align-items:flex-end;gap:20px;margin-top:22px;break-inside:avoid;page-break-inside:avoid;}
+  .lp-sign .sl{flex:1;font-weight:700;} .lp-sign .sl span{display:inline-block;border-bottom:1px solid #000;width:55%;min-width:120px;margin-left:6px;}
+  .lp-sign .st{width:120px;height:90px;border:1px dashed #000;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;}
+  .lp-nh{break-after:avoid;page-break-after:avoid;}
+  @media print{
+    @page{margin:10mm;}
+    .lp-page{border:none;padding:0;margin-bottom:8px;font-size:.8rem;}
+    .lp-page + .lp-page{margin-top:10px;} .lp-page + .lp-page .lp-img{display:none;}
+    .lp-v{min-height:0;padding:3px 8px;line-height:1.35;} .lp-tt th,.lp-tt td{padding:2px 8px;}
+    .lp-note{padding:6px 12px;line-height:1.4;}
+  }
+  @media print{
+    body{background:#fff;color:#000;}
+    .no-print{display:none !important;}
+    #examOutput{border:none;padding:0;}
+    .bloom-tag{display:none;}
+  }
+
+  .lib-pick{border:1px dashed var(--border);border-radius:10px;padding:8px 10px;margin:8px 0;background:var(--bg);}
+  .lib-pick summary{cursor:pointer;font-size:.82rem;font-weight:700;color:var(--accent);}
+  .lib-pick .lib-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;}
+  .lib-pick .lib-chips button{padding:4px 9px;font-size:.72rem;background:var(--surface2);border:1px solid var(--border);color:var(--text);}
+  .lib-pick button.lib-act{padding:9px 12px;font-size:.82rem;}
+  .lib-cls{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 10px;}
+  .lib-cls button{padding:7px 12px;font-size:.8rem;background:var(--surface2);border:1px solid var(--border);color:var(--text);}
+  .lib-cls button.on{background:var(--accent);color:#fff;border-color:var(--accent);}
+  .lib-subj{font-weight:700;font-size:.85rem;margin:12px 0 2px;color:var(--accent2);}
+  .bar{height:7px;background:var(--surface2);border-radius:5px;overflow:hidden;margin-top:6px;}
+  .bar > i{display:block;height:100%;background:var(--good);width:0;transition:width .3s;}
+
+  .chip{display:inline-block;background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:3px 10px;font-size:.75rem;margin:2px 4px 2px 0;}
+  #deadScreen{max-width:340px;margin:90px auto;text-align:center;}
+</style>
+</head>
+<body>
+
+<div id="deadScreen" class="hidden">
+  <h1>🔒 Link-gan ma shaqeynayo</h1>
+  <p class="sub">Link-gan waa khalad, waa la damiyay, ama waa la beddelay. La xiriir maamulka dugsiga si uu kuu siiyo link cusub.</p>
+</div>
+
+<div class="wrap hidden" id="app">
+  <h1 id="hello">👩‍🏫 Lesson Plan</h1>
+  <p class="sub" id="myScope"></p>
+
+  <div class="card no-print">
+    <h2>📘 Samee Lesson Plan + Note</h2>
+    <div class="row">
+      <div><label>Fasalka</label><select id="lpClass"></select></div>
+      <div><label>Maadada</label><select id="lpSubject"></select></div>
+    </div>
+    <div class="row">
+      <div><label>Unit / Chapter</label><input id="lpUnit" placeholder="Unit 3"></div>
+      <div><label>Lesson (cinwaanka casharka)</label><input id="lpLesson" placeholder="tusaale: Present Perfect Tense"></div>
+    </div>
+    <div class="row3">
+      <div><label>Date</label><input id="lpDate" type="date"></div>
+      <div><label>Day</label><input id="lpDay" placeholder="Monday"></div>
+      <div><label>Lesson/Session</label><input id="lpSession" placeholder="1/3"></div>
+    </div>
+    <div class="row3">
+      <div><label>Time</label><input id="lpDur" value="40 min"></div>
+      <div><label>Weekly</label><input id="lpWeekly" placeholder="5 periods"></div>
+      <div><label>Tirada objectives</label><input id="lpNObj" type="number" min="1" max="12" placeholder="Auto"></div>
+    </div>
+    <label>Luqadda</label>
+    <select id="lpLang">
+      <option value="en" selected>English</option><option value="so">Soomaali</option>
+      <option value="ar">العربية</option><option value="auto">Otomaatig — raac qoraalka</option>
+    </select>
+
+    <details class="lib-pick" open>
+      <summary>📚 Ka qaado Maktabadda (buugaagta maadadaada)</summary>
+      <select id="libBook"></select>
+      <div class="row">
+        <input id="libPages" placeholder="Bogagga (tusaale: 24-31)">
+        <input id="libQ" placeholder="Ama raadi cutub/cashar">
+      </div>
+      <div class="row" style="margin-top:8px;">
+        <button type="button" class="btn-ghost lib-act" id="libSearch">🔎 Raadi</button>
+        <button type="button" class="btn-ghost lib-act" id="libFill">⬇️ Soo qaado qoraalka</button>
+      </div>
+      <div class="lib-chips" id="libChips"></div>
+      <div class="status" id="libStatus"></div>
+    </details>
+
+    <label>Qoraalka casharka (ikhtiyaari)</label>
+    <textarea id="lpText" placeholder="Ku dheji qoraalka casharka halkan..."></textarea>
+    <button class="btn-primary" id="lpGen">⚡ Samee Lesson Plan + Note</button>
+    <div class="status" id="lpStatus"></div>
+    <div class="err hidden" id="lpErr"></div>
+  </div>
+
+  <div id="lpOut" class="hidden"></div>
+  <div class="actions no-print hidden" id="lpActions">
+    <button class="btn-ghost" id="lpPrint">🖨️ Daabac / Save PDF</button>
+  </div>
+  <div class="hint no-print hidden" id="lpHint">✏️ Qoraalka lesson plan-ka iyo note-ka waad wax ka bedeli kartaa (guji oo qor) ka hor intaadan daabicin.</div>
+
+  <div class="card no-print" style="margin-top:14px;">
+    <h2>🗂️ Lesson plan-ladaydii</h2>
+    <div id="lpSaved" class="status">Waa la soo dejinayaa...</div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const $ = id => document.getElementById(id);
+  function esc(s){ return String(s==null?"":s).replace(/[&<>"]/g, m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m])); }
+  const TOKEN = (location.pathname.match(/^\/t\/([a-f0-9]{48})\/?$/) || [])[1] || "";
+  let ME = null, BOOKS = [];
+
+  async function api(path, opts){
+    opts = opts || {};
+    opts.headers = Object.assign({ "Content-Type":"application/json", "x-teacher-token": TOKEN }, opts.headers||{});
+    const res = await fetch(path, opts);
+    if (res.status === 401){ dead(); throw new Error("unauthorized"); }
+    const j = await res.json().catch(()=>({}));
+    if (!res.ok) throw new Error(j.error || "server error");
+    return j;
+  }
+  function dead(){ $("app").classList.add("hidden"); $("deadScreen").classList.remove("hidden"); }
+
+  // ----- Fasalada + maadooyinka la fasaxay -----
+  const classes = () => Array.from(new Set(ME.assignments.map(a=>a.klass))).sort();
+  const subjectsOf = k => ME.assignments.filter(a=>a.klass===k).map(a=>a.subject).sort();
+
+  function fillClass(){
+    $("lpClass").innerHTML = classes().map(c=>`<option>${esc(c)}</option>`).join("");
+    fillSubject();
+  }
+  function fillSubject(){
+    $("lpSubject").innerHTML = subjectsOf($("lpClass").value).map(s=>`<option>${esc(s)}</option>`).join("");
+    fillBooks();
+  }
+  function fillBooks(){
+    const k = $("lpClass").value, s = $("lpSubject").value;
+    const list = BOOKS.filter(b=>b.class_name===k && b.subject===s);
+    $("libBook").innerHTML = list.length
+      ? list.map(b=>`<option value="${b.id}">${esc(b.title)} (${b.pages_done}/${b.num_pages} bog)</option>`).join("")
+      : '<option value="">— Buug lagama helin maadadan —</option>';
+    $("libChips").innerHTML = ""; $("libStatus").textContent = "";
+  }
+  $("lpClass").addEventListener("change", fillSubject);
+  $("lpSubject").addEventListener("change", fillBooks);
+
+  // ----- Maktabadda -----
+  $("libSearch").addEventListener("click", async ()=>{
+    const id = $("libBook").value, q = $("libQ").value.trim();
+    if (!id) return; if (q.length < 2){ $("libStatus").textContent = "Geli ugu yaraan 2 xaraf."; return; }
+    $("libStatus").textContent = "⏳ Waa la raadinayaa...";
+    try{
+      const r = await api(`/api/t/library/${id}/search?q=${encodeURIComponent(q)}`);
+      $("libStatus").textContent = r.hits.length ? "Dooro bogga:" : "Wax lagama helin.";
+      $("libChips").innerHTML = r.hits.map(h=>`<button type="button" data-p="${h.page}" title="${esc(h.snippet)}">Bog ${h.page}</button>`).join("");
+      $("libChips").querySelectorAll("[data-p]").forEach(b=>b.addEventListener("click", ()=>{
+        const cur = $("libPages").value.trim(); $("libPages").value = cur ? cur + "," + b.dataset.p : b.dataset.p;
+      }));
+    } catch(e){ $("libStatus").textContent = "⚠️ " + e.message; }
+  });
+  $("libFill").addEventListener("click", async ()=>{
+    const id = $("libBook").value; if (!id) return;
+    const pages = $("libPages").value.trim();
+    if (!pages){ $("libStatus").textContent = "Geli bogagga (tusaale 24-31)."; return; }
+    $("libStatus").textContent = "⏳ Waa la soo qaadayaa...";
+    try{
+      const r = await api(`/api/t/library/${id}/text?pages=${encodeURIComponent(pages)}`);
+      $("lpText").value = r.text;
+      $("libStatus").textContent = `✅ ${r.found}/${r.requested} bog la soo qaaday` + (r.missing.length ? ` · aan la akhrin: ${r.missing.join(", ")}` : "") + (r.truncated ? " · qoraalka waa la gaabiyay" : "");
+    } catch(e){ $("libStatus").textContent = "⚠️ " + e.message; }
+  });
+
+  // ----- Lesson plan render (isla qaabka maamulka) -----
+  const lpOut = $("lpOut");
+  function lpRender(d){
+    const m = d.meta||{}, p = d.plan||{};
+    const H = t=>`<div class="lp-h">${t}</div>`;
+    const box = (l,v)=>`<div class="lp-f">${H(l)}<div class="lp-v">${esc(v)||"&nbsp;"}</div></div>`;
+    const list = a=>(a||[]).map((x,i)=>`<div>${i+1}. ${esc(x)}</div>`).join("");
+    const note = (p.note||[]).map(s=>`<div class="lp-nh">${esc(s.h)}</div>` +
+      String(s.p||"").split("\n").filter(Boolean).map(x=>`<p>${esc(x)}</p>`).join("")).join("");
+    const img = `<img class="lp-img" src="/letterhead.jpg" alt="">`;
+    const rtl = m.lang === "ar" ? ' dir="rtl"' : "";
+    const tot = parseInt(String(m.duration||"").match(/\d+/), 10) || 40;
+    const w = [0.125, 0.075, 0.55, 0.25];
+    const mins = w.map(x=>Math.max(1, Math.round(tot*x)));
+    mins[2] += tot - mins.reduce((a,x)=>a+x,0);
+    const tm = ["Question of the last lesson","Attendance of students","Explanation","Evaluation of lesson and homework"].map((t,i)=>[t, mins[i]]);
+    lpOut.innerHTML = `<div class="lp-page">${img}<div class="lp-title">LESSON PLAN 2026-2027</div>
+      <div class="lp-grid">
+        <div class="lp-c"><b>TEACHER NAME:</b> ${esc(m.teacher)}</div>
+        <div class="lp-info">${[["Class",m.klass],["Subject",m.subject],["Date",m.date],["Day",m.day],["Unit",m.unit],["Lesson",m.lesson,"w"],["Time",m.duration],["Lesson/Session",m.session]]
+          .map(x=>`<div${x[2]?' class="w"':''}><div class="il">${x[0]}</div><div class="iv">${esc(x[1])||"&nbsp;"}</div></div>`).join("")}</div>
+        ${H("Introduction")}<div class="lp-v"${rtl}>${esc(p.introduction)}</div>
+        ${H("Lesson Objectives")}<div class="lp-v"${rtl}><b>Insha Allah, after the end of the lesson, the learner should be able to:</b>${list(p.objectives)}</div>
+        ${H("Teaching Methods")}<div class="lp-v"${rtl}>${esc(p.methods)}</div>
+        ${H("LEARNING AIDS")}<div class="lp-v"${rtl}>${esc(p.aids)}</div>
+        ${H("Evaluation")}<div class="lp-v lp-ev"${rtl}>${list(p.evaluation)}</div>
+      </div>
+      <div class="lp-tmw">${H("Time Management")}
+      <table class="lp-tt"><tr><th class="c">No.</th><th>Stage / Activity</th><th class="c">Time (min)</th></tr>
+      ${tm.map((r,i)=>`<tr><td class="c">${i+1}</td><td>${r[0]}</td><td class="c">${r[1]}</td></tr>`).join("")}
+      <tr><td></td><td><b>Total</b></td><td class="c"><b>${tm.reduce((a,r)=>a+r[1],0)}</b></td></tr>
+      <tr><td></td><td><b>Weekly</b></td><td class="c">${esc(m.weekly)||"&nbsp;"}</td></tr></table></div></div>
+      <div class="lp-page">${img}<div class="lp-title">LESSON NOTE</div>
+        <div class="lp-note"${rtl}><div class="lp-nh2">${esc([m.unit,m.lesson].filter(Boolean).join(" — "))}</div>${note}</div>
+        <div class="lp-sign"><div class="sl">Madaxa Xafiiska Waxbarashada:<span>&nbsp;</span></div><div class="st">Stamp</div></div></div>`;
+    lpOut.contentEditable = "true";
+    ["lpOut","lpActions","lpHint"].forEach(i=>$(i).classList.remove("hidden"));
+  }
+
+  async function lpLoadList(){
+    const el = $("lpSaved");
+    try{
+      const rows = await api("/api/t/lesson-plans");
+      if (!rows.length){ el.textContent = "Wali lesson plan lama keydin."; return; }
+      el.innerHTML = rows.map(r=>`<div class="saved-item"><div><b>${esc(r.subject||"-")}</b> — ${esc(r.class_name||"")}
+        <div class="meta">${esc(r.title||"")} · ${new Date(r.created_at).toLocaleDateString()}</div></div>
+        <div class="sv-btns"><button class="btn-ghost" data-lo="${r.id}">👁️ Fur</button>
+        <button class="btn-ghost" data-ld="${r.id}" style="color:var(--bad);">🗑️</button></div></div>`).join("");
+      el.querySelectorAll("[data-lo]").forEach(b=>b.addEventListener("click", async ()=>{
+        try{ lpRender(await api("/api/t/lesson-plans/"+b.dataset.lo)); lpOut.scrollIntoView({behavior:"smooth"}); }catch(e){ alert("Khalad: "+e.message); }
+      }));
+      el.querySelectorAll("[data-ld]").forEach(b=>b.addEventListener("click", async ()=>{
+        if (!confirm("Ma hubtaa inaad tirtirto?")) return;
+        await api("/api/t/lesson-plans/"+b.dataset.ld, {method:"DELETE"}); lpLoadList();
+      }));
+    } catch(e){ el.textContent = "⚠️ Khalad soo dejin ah."; }
+  }
+
+  $("lpGen").addEventListener("click", async ()=>{
+    const v = id=>$(id).value.trim(), err = $("lpErr");
+    if (!v("lpUnit") && !v("lpLesson")){ err.textContent = "⚠️ Fadlan geli cutubka ama cinwaanka casharka."; err.classList.remove("hidden"); return; }
+    err.classList.add("hidden");
+    $("lpGen").disabled = true; $("lpStatus").textContent = "⏳ Waa la dejinayaa lesson plan-ka iyo note-ka... (20-40 ilbiriqsi)";
+    try{
+      const r = await api("/api/t/generate-lesson-plan", {method:"POST", body: JSON.stringify({
+        klass:v("lpClass"), subject:v("lpSubject"), unit:v("lpUnit"), lesson:v("lpLesson"),
+        date:v("lpDate"), day:v("lpDay"), session:v("lpSession"), weekly:v("lpWeekly"), duration:v("lpDur"),
+        numObjectives:v("lpNObj"), lang:$("lpLang").value, text:v("lpText") })});
+      lpRender(r); $("lpStatus").textContent = "✅ Waa la diyaariyay oo la keydiyay."; lpLoadList();
+      lpOut.scrollIntoView({behavior:"smooth"});
+    } catch(e){ if (e.message!=="unauthorized"){ err.textContent = "⚠️ " + e.message; err.classList.remove("hidden"); } $("lpStatus").textContent = ""; }
+    finally { $("lpGen").disabled = false; }
+  });
+  $("lpPrint").addEventListener("click", ()=>window.print());
+
+  async function boot(){
+    if (!TOKEN){ dead(); return; }
+    try{
+      ME = await api("/api/t/me");
+      BOOKS = await api("/api/t/library").catch(()=>[]);
+    } catch(e){ dead(); return; }
+    $("hello").textContent = "👩‍🏫 " + ME.name;
+    $("myScope").innerHTML = "Waxaad diyaarin kartaa lesson plan: " + ME.assignments.map(a=>`<span class="chip">${esc(a.klass)} · ${esc(a.subject)}</span>`).join("");
+    fillClass(); lpLoadList();
+    $("app").classList.remove("hidden");
+  }
+  boot();
+})();
+</script>
+</body>
+</html>
