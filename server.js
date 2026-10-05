@@ -15,9 +15,9 @@ if (!process.env.DATABASE_URL) {
     "⚠️  DATABASE_URL lama helin. Ku dar Postgres plugin Railway-ga oo ku xidh variable-ka DATABASE_URL adeeggan."
   );
 }
-if (!process.env.ANTHROPIC_API_KEY) {
+if (!process.env.ANTHROPIC_API_KEY && !process.env.GEMINI_API_KEY) {
   console.warn(
-    "⚠️  ANTHROPIC_API_KEY lama helin. Ku dar Variables-ka Railway si samaynta imtixaanka iyo OCR-ku ay u shaqeeyaan."
+    "⚠️  Midna ANTHROPIC_API_KEY ama GEMINI_API_KEY lama helin. Ku dar ugu yaraan mid Variables-ka Railway si samaynta imtixaanka iyo OCR-ku ay u shaqeeyaan."
   );
 }
 
@@ -83,22 +83,111 @@ app.post("/api/login", (req, res) => {
   res.status(401).json({ ok: false });
 });
 
-// ---------- Kharashka & hadhaaga lacagta ----------
-// Qiimaha halkii 1 milyan token (doolar). Hubi qiimaha rasmiga ah ee https://claude.com/pricing
-// oo hagaaji Variables-ka Railway haddii uu is beddelo.
-const PRICE_IN = parseFloat(process.env.PRICE_INPUT_PER_MTOK || "3");
-const PRICE_OUT = parseFloat(process.env.PRICE_OUTPUT_PER_MTOK || "15");
-// Lacagta aad ku shubtay console.anthropic.com (doolar)
+// ---------- Doorashada AI: Claude ama Gemini ----------
+// Lacagta aad ku shubtay console.anthropic.com (doolar) — waxaa lagu xisaabiyaa hadhaagga Claude.
 const CREDIT_START = parseFloat(process.env.CREDIT_START_USD || "5");
+// Gemini bilaash (Google AI Studio free tier) = kharash 0. Haddii Google project-kaagu leeyahay billing, deji GEMINI_FREE_TIER=0
+const GEMINI_FREE = process.env.GEMINI_FREE_TIER !== "0";
+const GEMINI_BASE = process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta";
+const numEnv = (v, d) => {
+  const n = parseFloat(v);
+  return isNaN(n) ? d : n;
+};
 
-async function recordUsage(u, label) {
+// Qiimaha = doolar halkii 1 milyan token. Hubi qiimaha rasmiga ah (claude.com/pricing, ai.google.dev/pricing).
+const AI_CHOICES = {
+  "gemini-lite": {
+    provider: "gemini",
+    label: "Gemini Flash-Lite (bilaash / ugu jaban)",
+    model: process.env.GEMINI_MODEL_LITE || "gemini-3.1-flash-lite",
+    priceIn: numEnv(process.env.GEMINI_LITE_PRICE_IN, 0.25),
+    priceOut: numEnv(process.env.GEMINI_LITE_PRICE_OUT, 1.5),
+    free: GEMINI_FREE,
+  },
+  "gemini-flash": {
+    provider: "gemini",
+    label: "Gemini Flash (tayo wanaagsan)",
+    model: process.env.GEMINI_MODEL_FLASH || "gemini-3.8-flash",
+    priceIn: numEnv(process.env.GEMINI_FLASH_PRICE_IN, 0.75),
+    priceOut: numEnv(process.env.GEMINI_FLASH_PRICE_OUT, 3.75),
+    free: GEMINI_FREE,
+  },
+  "claude-haiku": {
+    provider: "claude",
+    label: "Claude Haiku (jaban)",
+    model: process.env.CLAUDE_MODEL_HAIKU || "claude-haiku-4-5-20251001",
+    priceIn: numEnv(process.env.CLAUDE_HAIKU_PRICE_IN, 1),
+    priceOut: numEnv(process.env.CLAUDE_HAIKU_PRICE_OUT, 5),
+    free: false,
+  },
+  "claude-sonnet": {
+    provider: "claude",
+    label: "Claude Sonnet (tayo ugu sarreysa)",
+    model: process.env.CLAUDE_MODEL || "claude-sonnet-5",
+    priceIn: numEnv(process.env.PRICE_INPUT_PER_MTOK, 3),
+    priceOut: numEnv(process.env.PRICE_OUTPUT_PER_MTOK, 15),
+    free: false,
+  },
+};
+
+const keyAvailable = (c) => (c.provider === "gemini" ? !!process.env.GEMINI_API_KEY : !!process.env.ANTHROPIC_API_KEY);
+
+// Doorashada hore (haddii aan la keydin): Gemini haddii key-giisa jiro, haddii kale Claude.
+let currentChoice = AI_CHOICES[process.env.AI_DEFAULT]
+  ? process.env.AI_DEFAULT
+  : process.env.GEMINI_API_KEY || !process.env.ANTHROPIC_API_KEY
+  ? "gemini-lite"
+  : "claude-sonnet";
+
+async function loadAiChoice() {
+  await pool.query(`CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '')`);
+  const r = await pool.query("SELECT value FROM app_settings WHERE key='ai_choice'");
+  if (r.rows[0] && AI_CHOICES[r.rows[0].value]) currentChoice = r.rows[0].value;
+  console.log("🤖 AI-ga la isticmaalayo:", currentChoice);
+}
+loadAiChoice().catch((e) => console.error("ai choice load error:", e.message));
+
+app.get("/api/ai-choice", requireAdmin, (req, res) => {
+  res.json({
+    current: currentChoice,
+    options: Object.entries(AI_CHOICES).map(([id, c]) => ({
+      id,
+      label: c.label,
+      provider: c.provider,
+      model: c.model,
+      available: keyAvailable(c),
+      free: !!c.free,
+    })),
+  });
+});
+
+app.post("/api/ai-choice", requireAdmin, async (req, res) => {
+  const id = req.body && req.body.choice;
+  const c = AI_CHOICES[id];
+  if (!c) return res.status(400).json({ error: "doorasho aan jirin" });
+  if (!keyAvailable(c)) {
+    const k = c.provider === "gemini" ? "GEMINI_API_KEY" : "ANTHROPIC_API_KEY";
+    return res.status(400).json({ error: `${k} lama dejin Variables-ka Railway.` });
+  }
+  currentChoice = id;
   try {
-    const inT = u.input_tokens || 0;
-    const outT = u.output_tokens || 0;
-    const cost = (inT * PRICE_IN + outT * PRICE_OUT) / 1e6;
+    await pool.query(
+      "INSERT INTO app_settings (key, value) VALUES ('ai_choice', $1) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value",
+      [id]
+    );
+  } catch (e) {
+    console.error("ai choice save error:", e.message);
+  }
+  res.json({ ok: true, current: id });
+});
+
+// ---------- Kharashka & hadhaaga lacagta ----------
+async function recordUsage(c, inT, outT, label) {
+  try {
+    const cost = c.free ? 0 : (inT * c.priceIn + outT * c.priceOut) / 1e6;
     await pool.query(
       "INSERT INTO api_usage (model, label, input_tokens, output_tokens, cost_usd) VALUES ($1,$2,$3,$4,$5)",
-      [CLAUDE_MODEL, label || "", inT, outT, cost]
+      [c.model, label || "", inT, outT, cost]
     );
   } catch (e) {
     console.error("usage log error:", e.message);
@@ -107,20 +196,24 @@ async function recordUsage(u, label) {
 
 app.get("/api/usage", requireAdmin, async (req, res) => {
   try {
-    const tot = await pool.query(
-      "SELECT COALESCE(SUM(cost_usd),0)::float AS spent, COUNT(*)::int AS calls, COALESCE(SUM(input_tokens),0)::int AS inp, COALESCE(SUM(output_tokens),0)::int AS outp FROM api_usage"
-    );
+    const tot = await pool.query(`SELECT
+        COALESCE(SUM(cost_usd) FILTER (WHERE model LIKE 'claude%'),0)::float AS claude_spent,
+        COUNT(*) FILTER (WHERE model LIKE 'claude%')::int AS claude_calls,
+        COALESCE(SUM(cost_usd) FILTER (WHERE model NOT LIKE 'claude%'),0)::float AS gemini_cost,
+        COUNT(*) FILTER (WHERE model NOT LIKE 'claude%')::int AS gemini_calls
+      FROM api_usage`);
     const last = await pool.query(
-      "SELECT label, input_tokens, output_tokens, cost_usd::float AS cost, created_at FROM api_usage ORDER BY id DESC LIMIT 10"
+      "SELECT model, label, input_tokens, output_tokens, cost_usd::float AS cost, created_at FROM api_usage ORDER BY id DESC LIMIT 10"
     );
     const t = tot.rows[0];
     res.json({
       start: CREDIT_START,
-      spent: t.spent,
-      remaining: Math.max(0, CREDIT_START - t.spent),
-      calls: t.calls,
-      input_tokens: t.inp,
-      output_tokens: t.outp,
+      claude_spent: t.claude_spent,
+      remaining: Math.max(0, CREDIT_START - t.claude_spent),
+      claude_calls: t.claude_calls,
+      gemini_cost: t.gemini_cost,
+      gemini_calls: t.gemini_calls,
+      current: currentChoice,
       last: last.rows,
     });
   } catch (e) {
@@ -128,16 +221,124 @@ app.get("/api/usage", requireAdmin, async (req, res) => {
   }
 });
 
-// ---------- Claude API helper ----------
-const CLAUDE_MODEL = process.env.CLAUDE_MODEL || "claude-sonnet-5";
+// ---------- AI helper (Claude + Gemini) ----------
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function callClaude({ system, messages, maxTokens, label }) {
+// Xaddid tirada codsiyada Gemini ee isku mar socda (free tier wuxuu leeyahay xad daqiiqadeed).
+function makeGate(max) {
+  let active = 0;
+  const q = [];
+  const next = () => {
+    if (active >= max || !q.length) return;
+    active++;
+    const { fn, resolve, reject } = q.shift();
+    fn()
+      .then(resolve, reject)
+      .finally(() => {
+        active--;
+        next();
+      });
+  };
+  return (fn) =>
+    new Promise((resolve, reject) => {
+      q.push({ fn, resolve, reject });
+      next();
+    });
+}
+const geminiGate = makeGate(Math.max(1, parseInt(process.env.GEMINI_CONCURRENCY || "3", 10)));
+
+function retryDelayMs(data) {
+  try {
+    const d = ((data && data.error && data.error.details) || []).find((x) => x && x.retryDelay);
+    if (d) return Math.ceil(parseFloat(d.retryDelay) * 1000) + 1000;
+  } catch (_) {}
+  return null;
+}
+
+async function geminiRequest(c, { system, messages, maxTokens, json }) {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) {
+    const err = new Error("GEMINI_API_KEY lama dejin server-ka.");
+    err.code = "no_api_key";
+    throw err;
+  }
+  const contents = messages.map((m) => ({
+    role: m.role === "assistant" ? "model" : "user",
+    parts:
+      typeof m.content === "string"
+        ? [{ text: m.content }]
+        : m.content.map((b) =>
+            b.type === "image"
+              ? { inline_data: { mime_type: b.source.media_type, data: b.source.data } }
+              : { text: b.text }
+          ),
+  }));
+  const url = `${GEMINI_BASE}/models/${encodeURIComponent(c.model)}:generateContent`;
+  let thinkingCfg = true;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const gen = { maxOutputTokens: maxTokens || 4096 };
+    if (json) gen.responseMimeType = "application/json";
+    if (thinkingCfg) gen.thinkingConfig = { thinkingLevel: "minimal" }; // thinking tokens waa lacag, yaree
+    const body = { contents, generationConfig: gen };
+    if (system) body.systemInstruction = { parts: [{ text: system }] };
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-goog-api-key": key },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) return data;
+    const msg = (data && data.error && data.error.message) || `Gemini error ${res.status}`;
+    // Moodel qaar ma aqbalaan thinkingConfig — ka tag oo dib u tijaabi
+    if (res.status === 400 && thinkingCfg && /think/i.test(msg)) {
+      thinkingCfg = false;
+      continue;
+    }
+    // Xad (rate limit) ama server mashquul — sug oo dib u tijaabi
+    if ([429, 500, 503].includes(res.status) && attempt < 4) {
+      const wait = retryDelayMs(data) || 8000 * (attempt + 1);
+      if (wait <= 65000) {
+        console.warn(`[gemini] ${res.status} — dib u tijaabin ${Math.round(wait / 1000)}s kadib`);
+        await sleep(wait);
+        continue;
+      }
+    }
+    const err = new Error(
+      res.status === 429
+        ? "Gemini: xadka bilaashka ah ayaa dhammaaday (daqiiqad ama maalin). Sug wax yar ama dooro AI kale. " + msg
+        : msg
+    );
+    err.code = "upstream_error";
+    throw err;
+  }
+}
+
+async function callAI({ system, messages, maxTokens, label, json }) {
+  const c = AI_CHOICES[currentChoice];
+
+  if (c.provider === "gemini") {
+    const data = await geminiGate(() => geminiRequest(c, { system, messages, maxTokens, json }));
+    const cand = (data.candidates || [])[0] || {};
+    const text = ((cand.content && cand.content.parts) || [])
+      .filter((p) => p.text && !p.thought)
+      .map((p) => p.text)
+      .join("\n");
+    const um = data.usageMetadata || {};
+    const inT = um.promptTokenCount || 0;
+    const outT = (um.candidatesTokenCount || 0) + (um.thoughtsTokenCount || 0); // thinking waxaa lagu dallacaa soo-saar
+    const stop = cand.finishReason || (data.promptFeedback && data.promptFeedback.blockReason) || "unknown";
+    console.log(`[ai] ${c.model} stop=${stop} in=${inT} out=${outT}`);
+    await recordUsage(c, inT, outT, label);
+    return { text, stop };
+  }
+
+  // ----- Claude -----
   if (!process.env.ANTHROPIC_API_KEY) {
     const err = new Error("ANTHROPIC_API_KEY lama dejin server-ka.");
     err.code = "no_api_key";
     throw err;
   }
-  const body = { model: CLAUDE_MODEL, max_tokens: maxTokens || 4096, messages };
+  const body = { model: c.model, max_tokens: maxTokens || 4096, messages };
   if (system) body.system = system;
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -148,17 +349,17 @@ async function callClaude({ system, messages, maxTokens, label }) {
     },
     body: JSON.stringify(body),
   });
-  const json = await res.json();
+  const jsonRes = await res.json();
   if (!res.ok) {
-    const err = new Error((json && json.error && json.error.message) || "Claude API error");
+    const err = new Error((jsonRes && jsonRes.error && jsonRes.error.message) || "Claude API error");
     err.code = "upstream_error";
     throw err;
   }
-  const text = (json.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n");
-  const u = json.usage || {};
-  console.log(`[claude] stop=${json.stop_reason} in=${u.input_tokens} out=${u.output_tokens}`);
-  await recordUsage(u, label);
-  return { text, stop: json.stop_reason };
+  const text = (jsonRes.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n");
+  const u = jsonRes.usage || {};
+  console.log(`[ai] ${c.model} stop=${jsonRes.stop_reason} in=${u.input_tokens} out=${u.output_tokens}`);
+  await recordUsage(c, u.input_tokens || 0, u.output_tokens || 0, label);
+  return { text, stop: jsonRes.stop_reason };
 }
 
 function extractJson(text) {
@@ -170,11 +371,11 @@ function extractJson(text) {
   return JSON.parse(t.slice(start, end + 1));
 }
 
-// Waxay u dirtaa Claude qayb yar; haddii JSON-ku xumaado mar keliya ayay dib u tijaabisaa.
+// Waxay u dirtaa AI-ga la doortay qayb yar; haddii JSON-ku xumaado mar keliya ayay dib u tijaabisaa.
 async function askJson(prompt, maxTokens, label) {
   let last = "";
   for (let attempt = 0; attempt < 2; attempt++) {
-    const r = await callClaude({ messages: [{ role: "user", content: prompt }], maxTokens, label });
+    const r = await callAI({ messages: [{ role: "user", content: prompt }], maxTokens, label, json: true });
     try {
       return extractJson(r.text);
     } catch (e) {
@@ -496,7 +697,7 @@ async function ocrOnePage(b64, mediaType) {
     },
     { type: "image", source: { type: "base64", media_type: mediaType, data: b64 } },
   ];
-  const r = await callClaude({ messages: [{ role: "user", content }], maxTokens: 4096, label: "ocr" });
+  const r = await callAI({ messages: [{ role: "user", content }], maxTokens: 4096, label: "ocr" });
   return (r.text || "").trim();
 }
 
