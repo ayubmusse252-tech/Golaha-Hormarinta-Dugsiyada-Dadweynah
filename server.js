@@ -420,9 +420,16 @@ const LANG_NAMES = { so: "Somali (Af-Soomaali)", en: "English", ar: "Arabic (ا�
 
 const LABELS = {
   so: {
-    mcqName: "QAYBTA 1-aad: Ikhtiyaar Sax ah",
-    mcqInstr: "Dooro jawaabta saxda ah ee su'aal kasta. Su'aal kastaa waxay leedahay dhibcaha ka horreeya.",
-    structName: "QAYBTA 2-aad: Su'aalo Qaab-dhismeed ah",
+    aName: "QAYBTA A: Su'aalaha Gaagaaban",
+    aInstr: "Ka jawaab dhammaan qaybaha hoose. Su'aal kastaa waxay leedahay dhibcaha ka horreeya.",
+    mcqName: "1. Ikhtiyaar Sax ah",
+    mcqInstr: "Dooro jawaabta saxda ah ee su'aal kasta.",
+    blankName: "2. Buuxi Meelaha Banaan",
+    blankInstr: "Ku buuxi meesha banaan ereyga ama weedha saxda ah.",
+    matchName: "3. Isku Aad",
+    matchInstr: "Ku aad shayga Tiirka A ee la socda Tiirka B (ku qor xarafka saxda ah).",
+    matchPrompt: "Ku aad Tiirka A iyo Tiirka B:", colA: "Tiirka A", colB: "Tiirka B",
+    structName: "QAYBTA B: Su'aalo Qaab-dhismeed ah",
     structInstr: "Ka jawaab dhammaan su'aalaha. Si buuxda u qor jawaabahaaga.",
     defSubject: "Maadada", defClass: "Fasalka", defDuration: "2 saac", defSchool: "Imtixaanka Maadada",
     titleTemplate: "Imtixaanka {subject} — {class}",
@@ -432,8 +439,15 @@ const LABELS = {
     bloom: { Remember: "Xusuusnaan", Understand: "Fahamka", Apply: "Dabaqid", Analyze: "Falanqayn", Evaluate: "Qiimeyn", Create: "Abuur" },
   },
   en: {
-    mcqName: "SECTION A: Multiple Choice",
-    mcqInstr: "Choose the correct answer for each question. The marks for each question are shown in brackets.",
+    aName: "SECTION A: Objective Questions",
+    aInstr: "Answer all the parts below. The marks for each question are shown in brackets.",
+    mcqName: "1. Multiple Choice",
+    mcqInstr: "Choose the correct answer for each question.",
+    blankName: "2. Fill in the Blanks",
+    blankInstr: "Fill in each blank with the correct word or phrase.",
+    matchName: "3. Matching",
+    matchInstr: "Match each item in Column A with its pair in Column B (write the correct letter).",
+    matchPrompt: "Match Column A with Column B:", colA: "Column A", colB: "Column B",
     structName: "SECTION B: Structured Questions",
     structInstr: "Answer all questions. Write your answers in full.",
     defSubject: "Subject", defClass: "Class", defDuration: "2 hours", defSchool: "Subject Examination",
@@ -444,9 +458,16 @@ const LABELS = {
     bloom: { Remember: "Remember", Understand: "Understand", Apply: "Apply", Analyze: "Analyze", Evaluate: "Evaluate", Create: "Create" },
   },
   ar: {
-    mcqName: "القسم الأول: الاختيار من متعدد",
-    mcqInstr: "اختر الإجابة الصحيحة لكل سؤال. درجة كل سؤال مكتوبة بين قوسين.",
-    structName: "القسم الثاني: الأسئلة المقالية",
+    aName: "القسم أ: الأسئلة الموضوعية",
+    aInstr: "أجب عن جميع الأجزاء التالية. درجة كل سؤال مكتوبة بين قوسين.",
+    mcqName: "١. الاختيار من متعدد",
+    mcqInstr: "اختر الإجابة الصحيحة لكل سؤال.",
+    blankName: "٢. أكمل الفراغات",
+    blankInstr: "أكمل كل فراغ بالكلمة أو العبارة الصحيحة.",
+    matchName: "٣. المزاوجة",
+    matchInstr: "صِل كل عنصر في العمود (أ) بما يناسبه في العمود (ب) (اكتب الحرف الصحيح).",
+    matchPrompt: "صِل بين العمود (أ) والعمود (ب):", colA: "العمود (أ)", colB: "العمود (ب)",
+    structName: "القسم ب: الأسئلة المقالية",
     structInstr: "أجب عن جميع الأسئلة. اكتب إجاباتك كاملة.",
     defSubject: "المادة", defClass: "الصف", defDuration: "ساعتان", defSchool: "امتحان المادة",
     titleTemplate: "امتحان {subject} — {class}",
@@ -476,39 +497,63 @@ function detectLang(text) {
   return so > en ? "so" : "en";
 }
 
+// Qaybta A = 60% (MCQ + meelaha banaan + isku aad), Qaybta B = 40% (qaab-dhismeed).
+const PART_A_SHARE = 0.6;
+const MATCH_PAIRS = 5; // isku-aad kasta wuxuu leeyahay 5 lammaane
+
 // Tirada su'aalaha otomaatig: waxay ku salaysan tahay dherer qoraalka iyo wadarta dhibcaha.
-function autoCounts({ chars, total, givenM, givenS, needM, needS }) {
+function autoCounts({ chars, total, given, need }) {
   const N = Math.min(36, Math.max(8, Math.round(chars / 1800)));
-  const autoM = Math.round(N * 0.6);
-  const autoS = N - autoM;
-  let m = needM ? autoM : givenM;
-  let s = needS ? autoS : givenS;
-  if (needM) {
-    if (s === 0) m = Math.min(60, Math.max(N, Math.min(total, 20)));
-    else m = Math.min(m, Math.max(1, Math.round(total * 0.4))); // MCQ kasta ugu yaraan 1 dhibic
+  const hasS = need.s || given.s > 0;
+  const partA = hasS ? Math.round(total * PART_A_SHARE) : total;
+  const partB = total - partA;
+  let m = need.m ? Math.max(2, Math.round(N * 0.4)) : given.m;
+  let f = need.f ? Math.max(2, Math.round(N * 0.2)) : given.f;
+  let x = need.x ? 1 : given.x;
+  let s = need.s ? Math.max(2, N - m - f) : given.s;
+  // Qaybta A waa inay ku filnaato dhibcaheeda (dhibic 1 ugu yaraan su'aal kasta / lammaane kasta)
+  const units = () => m + f + x * MATCH_PAIRS;
+  while (units() > partA) {
+    if (need.m && m > 1) m--;
+    else if (need.f && f > 1) f--;
+    else if (need.x && x > 0) x--;
+    else break;
   }
-  if (needS) {
-    s = Math.max(s, Math.ceil(Math.max(0, total - m) / 15)); // qaab-dhismeed kasta ≤ ~15 dhibcood
+  if (need.s) {
+    s = Math.max(s, Math.ceil(Math.max(0, partB) / 15)); // qaab-dhismeed kasta ≤ ~15 dhibcood
     s = Math.min(30, s);
   }
-  return { m: Math.min(60, m), s: Math.min(30, s) };
+  return { m: Math.min(60, m), f: Math.min(40, f), x: Math.min(6, x), s: Math.min(30, s) };
 }
 
 function batchPrompt({ kind, n, marksList, textSlice, subject, klass, diagrams, diagramTopics, part, parts, langName, forced }) {
-  const bloom = kind === "mcq"
-    ? "Remember, Understand, Apply (lower and middle levels)"
-    : "Apply, Analyze, Evaluate, Create (higher levels); mix short and long questions";
+  const bloom = {
+    mcq: "Remember, Understand, Apply (lower and middle levels)",
+    blank: "Remember, Understand (lower levels)",
+    match: "Remember, Understand (lower levels)",
+    struct: "Apply, Analyze, Evaluate, Create (higher levels); mix short and long questions",
+  }[kind];
   const diag = diagrams > 0
     ? `EXACTLY ${diagrams} question(s) must include an "svg" diagram (simple, clear SVG: <svg viewBox="0 0 300 200" xmlns="http://www.w3.org/2000/svg">...</svg>, lines and short labels written in ${langName}; national-exam style: graph, diagram, geometry, circuit, etc.). All other questions have "svg": null.${diagramTopics ? " Preferred diagram topics: " + diagramTopics + "." : ""}`
     : `All "svg" values must be null.`;
   const langRule = forced
     ? `LANGUAGE (critical): Write EVERYTHING (question text, options, answers, diagram labels) in ${langName}, even if the lesson text is in another language.`
     : `LANGUAGE (critical): The lesson text below is written in ${langName}. Write EVERYTHING (question text, options, answers, diagram labels) in ${langName}, exactly the language of the lesson. Do NOT translate into any other language. Keep technical terms as they appear in the lesson.`;
-  const shape = kind === "mcq"
-    ? `{"questions":[{"text":"...","options":["A) ...","B) ...","C) ...","D) ..."],"answer":"B) ...","bloom":"Remember","svg":null}]}`
-    : `{"questions":[{"text":"... (add parts a), b), c) when appropriate)","answer":"Short model answer + marking points","bloom":"Analyze","svg":null}]}`;
+  const kindDesc = {
+    mcq: "multiple-choice questions (4 options A-D, exactly one correct answer, plausible distractors)",
+    blank: `fill-in-the-blank questions: each is ONE complete sentence taken from the lesson in which exactly ONE key term, number or short phrase (1-3 words) is replaced by "__________" (ten underscores). The blank must have a single clear correct answer; do not blank out trivial words`,
+    match: `matching questions: each question is a set of EXACTLY ${MATCH_PAIRS} pairs (term ↔ its definition / function / example / meaning) taken from the lesson. Keep every item short (max ~12 words), every left item must match exactly one right item, and no two pairs may be confusable`,
+    struct: "structured questions",
+  }[kind];
+  const shape = {
+    mcq: `{"questions":[{"text":"...","options":["A) ...","B) ...","C) ...","D) ..."],"answer":"B) ...","bloom":"Remember","svg":null}]}`,
+    blank: `{"questions":[{"text":"The __________ is responsible for ...","answer":"the missing word(s)","bloom":"Remember","svg":null}]}`,
+    match: `{"questions":[{"pairs":[{"left":"term 1","right":"its match 1"},{"left":"term 2","right":"its match 2"},{"left":"term 3","right":"its match 3"},{"left":"term 4","right":"its match 4"},{"left":"term 5","right":"its match 5"}],"bloom":"Remember","svg":null}]}`,
+    struct: `{"questions":[{"text":"... (add parts a), b), c) when appropriate)","answer":"Short model answer + marking points","bloom":"Analyze","svg":null}]}`,
+  }[kind];
+  const unit = kind === "match" ? "matching sets" : "questions";
   const marksLine = kind === "struct" ? `\nMarks per question (in order): ${marksList.join(", ")}. Questions with more marks must be longer / more demanding.` : "";
-  return `You are an expert exam writer for national-standard school exams in Somalia (Ministry of Education / National exam style). Write ${n} ${kind === "mcq" ? "multiple-choice questions (4 options A-D, exactly one correct answer, plausible distractors)" : "structured questions"} about ${subject} (${klass}).
+  return `You are an expert exam writer for national-standard school exams in Somalia (Ministry of Education / National exam style). Write ${n} ${kindDesc} about ${subject} (${klass}).
 Bloom's levels: ${bloom}.${marksLine}
 ${langRule}
 Every question must be based ONLY on the lesson text below and must not repeat each other. The text is part ${part}/${parts} of the lessons; make the questions cover this part well.
@@ -519,8 +564,20 @@ LESSON TEXT:
 ${textSlice}
 """
 
-Return ONLY JSON (no commentary, no code fences). The number of questions must be ${n}. The "bloom" field must always be one of these English keys: Remember, Understand, Apply, Analyze, Evaluate, Create (it is translated later). Format:
+Return ONLY JSON (no commentary, no code fences). The number of ${unit} must be ${n}. The "bloom" field must always be one of these English keys: Remember, Understand, Apply, Analyze, Evaluate, Create (it is translated later). Format:
 ${shape}`;
+}
+
+function shuffled(arr) {
+  const a = arr.slice();
+  for (let tries = 0; tries < 10; tries++) {
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    if (a.some((v, i) => v !== arr[i])) break;
+  }
+  return a;
 }
 
 // ---------- Generate an exam from pasted/extracted lesson text ----------
@@ -530,6 +587,8 @@ app.post("/api/generate-exam", requireAdmin, async (req, res) => {
       subject = "",
       klass = "",
       mcqN = null,
+      blankN = null,
+      matchN = null,
       structN = null,
       totalMarks = 100,
       duration = "",
@@ -541,12 +600,15 @@ app.post("/api/generate-exam", requireAdmin, async (req, res) => {
     } = req.body || {};
 
     const isBlank = (v) => v === null || v === undefined || String(v).trim() === "" || isNaN(parseInt(v, 10));
-    const needM = isBlank(mcqN);
-    const needS = isBlank(structN);
-    const givenM = needM ? 0 : Math.max(0, Math.min(60, parseInt(mcqN, 10)));
-    const givenS = needS ? 0 : Math.max(0, Math.min(30, parseInt(structN, 10)));
+    const need = { m: isBlank(mcqN), f: isBlank(blankN), x: isBlank(matchN), s: isBlank(structN) };
+    const given = {
+      m: need.m ? 0 : Math.max(0, Math.min(60, parseInt(mcqN, 10))),
+      f: need.f ? 0 : Math.max(0, Math.min(40, parseInt(blankN, 10))),
+      x: need.x ? 0 : Math.max(0, Math.min(6, parseInt(matchN, 10))),
+      s: need.s ? 0 : Math.max(0, Math.min(30, parseInt(structN, 10))),
+    };
     const total = Math.max(1, parseInt(totalMarks, 10) || 100);
-    if (!needM && !needS && givenM + givenS === 0) return res.status(400).json({ error: "questions required" });
+    if (!need.m && !need.f && !need.x && !need.s && given.m + given.f + given.x + given.s === 0) return res.status(400).json({ error: "questions required" });
     const dCount = Math.max(0, Math.min(10, parseInt(diagramCount, 10) || 0));
     const dTopics = String(diagramTopics || "").trim();
 
@@ -577,78 +639,124 @@ app.post("/api/generate-exam", requireAdmin, async (req, res) => {
     if (allText.length > MAX_SOURCE_CHARS) allText = allText.slice(0, MAX_SOURCE_CHARS);
 
     // Tirada su'aalaha: haddii aan la qorin, si otomaatig ah ayaa loo doortaa.
-    const { m: mN, s: sN } = autoCounts({ chars: allText.length, total, givenM, givenS, needM, needS });
-    if (mN + sN === 0) return res.status(400).json({ error: "questions required" });
+    const { m: mN, f: fN, x: xN, s: sN } = autoCounts({ chars: allText.length, total, given, need });
+    if (mN + fN + xN + sN === 0) return res.status(400).json({ error: "questions required" });
 
-    // Dhibcaha: saamiga 40:60 — Multiple Choice = 40%, Structure = 60% wadarta dhibcaha.
-    // Su'aal kastaa waa inay ugu yaraan 1 dhibic hesho (kaliya haddii wadarta aanay ogolayn ayaa saamigu xoogaa is-beddelaa).
-    let mcqTotal = 0;
-    if (mN === 0) mcqTotal = 0;
-    else if (sN === 0) mcqTotal = total;
+    // Dhibcaha: Qaybta A (MCQ + meelaha banaan + isku aad) = 60%, Qaybta B (qaab-dhismeed) = 40%.
+    // Su'aal kastaa waa inay ugu yaraan 1 dhibic hesho (lammaane kastaa 1 dhibic).
+    const unitsA = mN + fN + xN * MATCH_PAIRS;
+    let partA = 0;
+    if (unitsA === 0) partA = 0;
+    else if (sN === 0) partA = total;
     else {
-      mcqTotal = Math.round(total * 0.4);
-      mcqTotal = Math.max(mcqTotal, mN);          // MCQ kasta >= 1
-      mcqTotal = Math.min(mcqTotal, total - sN);  // structure kasta >= 1
-      mcqTotal = Math.max(1, mcqTotal);
+      partA = Math.round(total * PART_A_SHARE);
+      partA = Math.max(partA, unitsA);       // Qaybta A >= tirada unugyadeeda
+      partA = Math.min(partA, total - sN);   // Qaybta B: su'aal kasta >= 1
+      partA = Math.max(1, partA);
     }
-    const structTotal = total - mcqTotal;
-    const mcqMarks = distribute(mcqTotal, mN);
+    const structTotal = total - partA;
+
+    // U qaybi dhibcaha Qaybta A noocyada: MCQ (1/unug), banaan (1/unug), isku-aad (5 unug/set)
+    const kinds = [["mcq", mN, 1], ["blank", fN, 1], ["match", xN, MATCH_PAIRS]].filter((k) => k[1] > 0);
+    const kindTotals = {};
+    let left = partA;
+    kinds.forEach((k, i) => {
+      if (i === kinds.length - 1) { kindTotals[k[0]] = left; return; }
+      const t = Math.min(left, Math.max(k[1] * k[2], Math.round((partA * k[1] * k[2]) / unitsA)));
+      kindTotals[k[0]] = t;
+      left -= t;
+    });
+    const mcqMarks = distribute(kindTotals.mcq || 0, mN);
+    const blankMarks = distribute(kindTotals.blank || 0, fN);
+    const matchMarks = distribute(kindTotals.match || 0, xN);
     const structMarks = distribute(structTotal, sN);
 
     const mcqCounts = splitCounts(mN, 10);
+    const blankCounts = splitCounts(fN, 10);
+    const matchCounts = splitCounts(xN, 3);
     const structCounts = splitCounts(sN, 4);
 
     // Sawirrada ku qaybi qaybaha qaab-dhismeedka (haddii aysan jirin, MCQ)
     const diagTargets = structCounts.length ? structCounts : mcqCounts;
     const diagAlloc = diagTargets.map(() => 0);
-    for (let i = 0; i < dCount; i++) diagAlloc[i % diagTargets.length]++;
+    for (let i = 0; i < dCount && diagTargets.length; i++) diagAlloc[i % diagTargets.length]++;
 
     const jobs = [];
-    let offset = 0;
-    const mcqSlices = splitText(allText, mcqCounts.length);
-    mcqCounts.forEach((n, i) => {
-      const d = structCounts.length ? 0 : diagAlloc[i];
-      jobs.push({ kind: "mcq", marks: mcqMarks.slice(offset, offset + n), p: batchPrompt({ kind: "mcq", n, marksList: [], textSlice: mcqSlices[i], subject: subjectF, klass: klassF, diagrams: d, diagramTopics: dTopics, part: i + 1, parts: mcqCounts.length, langName, forced: !!forced }), max: d ? 6000 : 4000, label: "MCQ " + (i + 1) });
-      offset += n;
-    });
-    offset = 0;
-    const structSlices = splitText(allText, structCounts.length);
-    structCounts.forEach((n, i) => {
-      const ml = structMarks.slice(offset, offset + n);
-      const d = diagAlloc[i];
-      jobs.push({ kind: "struct", marks: ml, p: batchPrompt({ kind: "struct", n, marksList: ml, textSlice: structSlices[i], subject: subjectF, klass: klassF, diagrams: d, diagramTopics: dTopics, part: i + 1, parts: structCounts.length, langName, forced: !!forced }), max: d ? 7000 : 5000, label: "Struct " + (i + 1) });
-      offset += n;
-    });
+    const addJobs = (kind, counts, marksArr, tokens, label, diagFn) => {
+      let offset = 0;
+      const slices = splitText(allText, counts.length);
+      counts.forEach((n, i) => {
+        const d = diagFn ? diagFn(i) : 0;
+        const ml = marksArr.slice(offset, offset + n);
+        jobs.push({ kind, marks: ml, p: batchPrompt({ kind, n, marksList: ml, textSlice: slices[i], subject: subjectF, klass: klassF, diagrams: d, diagramTopics: dTopics, part: i + 1, parts: counts.length, langName, forced: !!forced }), max: d ? tokens + 2000 : tokens, label: label + " " + (i + 1) });
+        offset += n;
+      });
+    };
+    addJobs("mcq", mcqCounts, mcqMarks, 4000, "MCQ", (i) => (structCounts.length ? 0 : diagAlloc[i]));
+    addJobs("blank", blankCounts, blankMarks, 3000, "Blank");
+    addJobs("match", matchCounts, matchMarks, 3000, "Match");
+    addJobs("struct", structCounts, structMarks, 5000, "Struct", (i) => diagAlloc[i]);
 
     const results = await Promise.all(jobs.map((j) => askJson(j.p, j.max, j.label)));
 
-    const mkSection = (kind, name, instructions) => {
+    // Soo ururi su'aalaha nooc kasta (oo dhibcahooda leh)
+    const collect = (kind) => {
       const qs = [];
       results.forEach((r, i) => {
         if (jobs[i].kind !== kind) return;
-        (r.questions || []).slice(0, jobs[i].marks.length).forEach((q, k) => qs.push({ ...q, marks: jobs[i].marks[k] }));
+        (r.questions || []).slice(0, jobs[i].marks.length).forEach((q, k) => {
+          const marks = jobs[i].marks[k];
+          if (kind === "match") {
+            const pairs = (Array.isArray(q.pairs) ? q.pairs : []).filter((p) => p && p.left && p.right).slice(0, 8);
+            if (pairs.length < 2) return;
+            const rightShuffled = shuffled(pairs.map((p) => String(p.right)));
+            const letters = "ABCDEFGHIJ";
+            const ans = pairs.map((p, idx) => `${idx + 1}-${letters[rightShuffled.indexOf(String(p.right))]}`).join(", ");
+            qs.push({
+              type: "match", marks, bloom: q.bloom || "", svg: null, answer: ans,
+              text: L.matchPrompt,
+              match: { left: pairs.map((p) => String(p.left)), right: rightShuffled, colA: L.colA, colB: L.colB },
+            });
+          } else {
+            qs.push({ ...q, type: kind, marks });
+          }
+        });
       });
-      return { name, instructions, qs };
+      return qs;
     };
-    const s1 = mkSection("mcq", L.mcqName, L.mcqInstr);
-    const s2 = mkSection("struct", L.structName, L.structInstr);
+    const qMcq = collect("mcq");
+    const qBlank = collect("blank");
+    const qMatch = collect("match");
+    const qStruct = collect("struct");
+
+    const secA = {
+      name: L.aName, instructions: L.aInstr,
+      subtitles: {
+        mcq: { name: L.mcqName, instr: L.mcqInstr },
+        blank: { name: L.blankName, instr: L.blankInstr },
+        match: { name: L.matchName, instr: L.matchInstr },
+      },
+      qs: [...qMcq, ...qBlank, ...qMatch],
+    };
+    const secB = { name: L.structName, instructions: L.structInstr, qs: qStruct };
 
     let n = 1;
     const answerKey = [];
-    const sections = [s1, s2]
-      .filter((s) => s.qs.length)
-      .map((s) => ({
-        name: s.name,
-        instructions: s.instructions,
-        marks: s.qs.reduce((a, q) => a + q.marks, 0),
-        questions: s.qs.map((q) => {
+    const sections = [secA, secB]
+      .filter((sec) => sec.qs.length)
+      .map((sec) => ({
+        name: sec.name,
+        instructions: sec.instructions,
+        subtitles: sec.subtitles || null,
+        marks: sec.qs.reduce((a, q) => a + q.marks, 0),
+        questions: sec.qs.map((q) => {
           const number = n++;
           answerKey.push({ number, answer: q.answer || "" });
-          return { number, text: q.text, marks: q.marks, bloom: q.bloom || "", options: q.options || null, svg: q.svg || null };
+          return { number, type: q.type, text: q.text, marks: q.marks, bloom: q.bloom || "", options: q.options || null, match: q.match || null, svg: q.svg || null };
         }),
       }));
     const data = { sections, answerKey };
-    const counts = { mcq: s1.qs.length, struct: s2.qs.length, autoMcq: needM, autoStruct: needS };
+    const counts = { mcq: qMcq.length, blank: qBlank.length, match: qMatch.length, struct: qStruct.length, autoMcq: need.m, autoBlank: need.f, autoMatch: need.x, autoStruct: need.s };
     const meta = { subject: subjectF, klass: klassF, totalMarks: total, duration: durationF, school, sourcesLabel, lang: examLang, labels: L, counts };
 
     const id = crypto.randomUUID();
