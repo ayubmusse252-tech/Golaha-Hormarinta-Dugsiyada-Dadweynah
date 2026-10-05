@@ -20,6 +20,7 @@ App samaynaya imtixaanaada dugsiga, oo ku dhisan Bloom's Taxonomy, ku salaysan b
 - PDF sawir ah (scanned) — taabo **"🔍 Akhri Sawirka (OCR)"**, Claude ayaa sawirrada ka akhrin doona qoraalka.
 - **Luqadda imtixaanka** waxay raacdaa luqadda casharka (Soomaali / English / العربية) — tarjumaad ma jirto. Haddii aad rabto, gacanta ka dooro luqadda.
 - **OCR keydsan**: bog kasta (buug + lambarka bogga) mar keliya ayaa la akhriyaa oo lagu keydiyaa Postgres (`ocr_pages`). Marka mar dambe isla buugga la geliyo, boggagga hore loo akhriyay keydka ayaa laga qaadayaa; kuwa cusub oo keliya ayaa la akhriyaa. Buugga oo dhan lama akhriyo — bogagga aad dooratay oo keliya.
+- **Qaab-dhismeedka imtixaanka (60/40)**: **Qaybta A = 60%** dhibcaha (Ikhtiyaar MCQ + Buuxi Meelaha Banaan + Isku Aad), **Qaybta B = 40%** (su'aalo qaab-dhismeed). Isku-aad kasta wuxuu leeyahay 5 lammaane (Tiirka A ↔ Tiirka B, B waa la isku qasay) — jawaabaha waxay ku jiraan Furaha Jawaabaha.
 - **Tirada su'aalaha ikhtiyaari**: haddii aad banaan ka dhaafto, nidaamku wuxuu ka doortaa dherer qoraalka iyo wadarta dhibcaha.
 - Diagram/sawir otomaatig ah oo loogu daro su'aalaha u baahan (xisaab, saynis, iwm).
 - Imtixaanada la sameeyay waa la keydiyaa (Postgres) — waxaad mar dambe ka furi kartaa "📚 Imtixaanadii Hore".
