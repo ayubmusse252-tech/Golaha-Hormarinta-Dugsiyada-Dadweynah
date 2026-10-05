@@ -149,6 +149,7 @@
   <p class="sub no-print">Ku dheji ama soo geli buugga casharka, nidaamku wuxuu kuu dajin doonaa imtixaan heer-qaran ah oo ku dhisan Bloom's Taxonomy.</p>
   <div id="usageBox" class="no-print" style="display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:10px;padding:8px 12px;margin:8px 0;font-size:14px">
     <span id="usageText">💰 Hadhaaga: ...</span>
+    <select id="aiChoice" title="Dooro AI-ga" style="border:1px solid #cbd5e1;border-radius:8px;padding:4px 8px;background:#fff;max-width:100%"></select>
     <button id="usageBtn" type="button" style="border:0;background:#e2e8f0;border-radius:8px;padding:4px 10px;cursor:pointer">🔄</button>
   </div>
   <div id="usageDetail" class="no-print hidden" style="font-size:13px;background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:8px 12px;margin-bottom:8px"></div>
@@ -327,11 +328,35 @@
     try{
       const u = await api("/api/usage");
       const f = n => "$" + Number(n).toFixed(4);
-      $("usageText").textContent = "💰 Hadhay: $" + u.remaining.toFixed(2) + " / $" + u.start.toFixed(2) + " · La isticmaalay: " + f(u.spent) + " · " + u.calls + " call";
-      const rows = (u.last||[]).map(r => "• " + (r.label||"call") + ": " + r.input_tokens + " in / " + r.output_tokens + " out = " + f(r.cost)).join("<br>");
-      $("usageDetail").innerHTML = "<b>10-kii ugu dambeeyay:</b><br>" + (rows || "Weli wax call ah ma jiro.");
+      let gem = " · Gemini: " + u.gemini_calls + " call";
+      gem += u.gemini_cost > 0 ? " (" + f(u.gemini_cost) + ")" : " (bilaash)";
+      $("usageText").textContent = "💰 Claude hadhay: $" + u.remaining.toFixed(2) + " / $" + u.start.toFixed(2) + gem;
+      const rows = (u.last||[]).map(r => "• " + (r.model||"") + " · " + (r.label||"call") + ": " + r.input_tokens + " in / " + r.output_tokens + " out = " + (r.cost > 0 ? f(r.cost) : "bilaash")).join("<br>");
+      $("usageDetail").innerHTML = "<b>Claude la isticmaalay:</b> " + f(u.claude_spent) + " (" + u.claude_calls + " call)<br><br><b>10-kii ugu dambeeyay:</b><br>" + (rows || "Weli wax call ah ma jiro.");
     }catch(e){}
   }
+
+  async function loadChoice(){
+    try{
+      const j = await api("/api/ai-choice");
+      const sel = $("aiChoice");
+      sel.innerHTML = "";
+      j.options.forEach(o => {
+        const opt = document.createElement("option");
+        opt.value = o.id;
+        opt.textContent = (o.provider === "gemini" ? "🟦 " : "🟧 ") + o.label + (o.available ? "" : " — key ma jiro");
+        opt.disabled = !o.available;
+        sel.appendChild(opt);
+      });
+      sel.value = j.current;
+    }catch(e){}
+  }
+  $("aiChoice").addEventListener("change", async (e)=>{
+    try{
+      await api("/api/ai-choice", { method:"POST", body: JSON.stringify({ choice: e.target.value }) });
+    }catch(err){ alert(err.message); }
+    loadChoice(); loadUsage();
+  });
   $("usageBtn").addEventListener("click", ()=>{ $("usageDetail").classList.toggle("hidden"); loadUsage(); });
 
   async function boot(){
@@ -339,7 +364,7 @@
     if (!pw){ showLogin(); return; }
     try{
       const j = await fetch("/api/login", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({password:pw}) }).then(r=>r.json());
-      if (j.ok){ showApp(); loadSavedExams(); libReload(); loadUsage(); setInterval(loadUsage, 20000); }
+      if (j.ok){ showApp(); loadSavedExams(); libReload(); loadUsage(); loadChoice(); setInterval(loadUsage, 20000); }
       else showLogin();
     } catch(e){ showLogin("Khalad xidhiidh server ah."); }
   }
@@ -349,7 +374,7 @@
     try{
       const res = await fetch("/api/login", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({password:pw}) });
       const j = await res.json();
-      if (j.ok){ localStorage.setItem(PW_KEY, pw); showApp(); loadSavedExams(); libReload(); loadUsage(); setInterval(loadUsage, 20000); }
+      if (j.ok){ localStorage.setItem(PW_KEY, pw); showApp(); loadSavedExams(); libReload(); loadUsage(); loadChoice(); setInterval(loadUsage, 20000); }
       else { $("loginErr").textContent = "Sirta waa qalad."; $("loginErr").classList.remove("hidden"); }
     } catch(e){ $("loginErr").textContent = "Khalad server ah."; $("loginErr").classList.remove("hidden"); }
   });
