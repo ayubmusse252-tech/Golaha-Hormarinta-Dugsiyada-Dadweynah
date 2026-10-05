@@ -1,1046 +1,1166 @@
-<!DOCTYPE html>
-<html lang="so">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Samaynta Imtixaanka</title>
-<style>
-  :root{
-    --bg:#f4f5f7; --surface:#fff; --surface2:#eef0f3; --border:#d9dce2;
-    --text:#1b1f27; --dim:#5c6370; --accent:#1e4fa3; --accent2:#163d82;
-    --good:#1e8e5a; --bad:#c0392b; --radius:12px;
+import express from "express";
+import pkg from "pg";
+import crypto from "crypto";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const { Pool } = pkg;
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const app = express();
+app.use(express.json({ limit: "25mb" })); // raise limit: OCR requests carry page images
+
+// ---------- Database ----------
+if (!process.env.DATABASE_URL) {
+  console.warn(
+    "⚠️  DATABASE_URL lama helin. Ku dar Postgres plugin Railway-ga oo ku xidh variable-ka DATABASE_URL adeeggan."
+  );
+}
+if (!process.env.ANTHROPIC_API_KEY && !process.env.GEMINI_API_KEY) {
+  console.warn(
+    "⚠️  Midna ANTHROPIC_API_KEY ama GEMINI_API_KEY lama helin. Ku dar ugu yaraan mid Variables-ka Railway si samaynta imtixaanka iyo OCR-ku ay u shaqeeyaan."
+  );
+}
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DATABASE_URL && process.env.DATABASE_URL.includes("railway")
+    ? { rejectUnauthorized: false }
+    : false,
+});
+
+async function initDb() {
+  await pool.query(`CREATE TABLE IF NOT EXISTS exams (
+    id TEXT PRIMARY KEY,
+    subject TEXT NOT NULL DEFAULT '',
+    class_name TEXT NOT NULL DEFAULT '',
+    total_marks INT NOT NULL DEFAULT 0,
+    duration TEXT DEFAULT '',
+    sources TEXT DEFAULT '',
+    data JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ DEFAULT now()
+  )`);
+  // OCR cache: boggag kasta (buug + bog) mar keliya ayaa la akhriyaa, kadibna waa la keydiyaa.
+  await pool.query(`CREATE TABLE IF NOT EXISTS ocr_pages (
+    doc_hash TEXT NOT NULL,
+    page INT NOT NULL,
+    doc_name TEXT NOT NULL DEFAULT '',
+    text TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ DEFAULT now(),
+    PRIMARY KEY (doc_hash, page)
+  )`);
+  // Kharashka API: call kasta waa la diiwaangeliyaa (token + doolar)
+  await pool.query(`CREATE TABLE IF NOT EXISTS api_usage (
+    id SERIAL PRIMARY KEY,
+    model TEXT NOT NULL DEFAULT '',
+    label TEXT NOT NULL DEFAULT '',
+    input_tokens INT NOT NULL DEFAULT 0,
+    output_tokens INT NOT NULL DEFAULT 0,
+    cost_usd NUMERIC(12,6) NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT now()
+  )`);
+  console.log("✅ Database ready");
+}
+initDb().catch((e) => console.error("DB init error:", e));
+
+// ---------- Admin auth (same pattern as the evaluation app) ----------
+function requireAdmin(req, res, next) {
+  if (!process.env.ADMIN_PASSWORD) {
+    return res.status(500).json({ error: "ADMIN_PASSWORD lama dejin server-ka." });
   }
-  *{box-sizing:border-box;}
-  body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;}
-  .wrap{max-width:780px;margin:0 auto;padding:16px 14px 60px;}
-  h1{font-size:1.25rem;margin:4px 0 2px;}
-  h2{font-size:1.05rem;margin:0 0 10px;}
-  .sub{color:var(--dim);font-size:.85rem;margin:0 0 16px;}
-  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:14px;}
-  label{display:block;font-size:.82rem;font-weight:600;margin:10px 0 4px;}
-  textarea,input,select{width:100%;padding:10px 11px;border-radius:9px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:.92rem;font-family:inherit;}
-  textarea{min-height:110px;resize:vertical;line-height:1.4;}
-  .row{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
-  .row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;}
-  @media (max-width:480px){ .row3{grid-template-columns:1fr 1fr;} }
-  button{cursor:pointer;border:none;border-radius:9px;font-weight:700;font-size:.92rem;padding:12px 16px;}
-  .btn-primary{background:var(--accent);color:#fff;width:100%;margin-top:14px;}
-  .btn-primary:disabled{opacity:.6;cursor:default;}
-  .btn-ghost{background:var(--surface2);color:var(--text);border:1px solid var(--border);}
-  .actions{display:flex;gap:8px;margin-top:10px;}
-  .actions button{flex:1;}
-  .status{font-size:.82rem;color:var(--dim);margin-top:8px;min-height:1.2em;}
-  .err{color:var(--bad);font-size:.85rem;margin-top:8px;}
-  .hidden{display:none !important;}
-  #examOutput{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin-top:4px;}
-  .ex-head{text-align:center;border-bottom:2px solid var(--text);padding-bottom:10px;margin-bottom:14px;}
-  .ex-head h2{margin:0 0 4px;font-size:1.1rem;}
-  .ex-head .meta{font-size:.85rem;color:var(--dim);}
-  .ex-fields{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:.85rem;margin-bottom:16px;}
-  .ex-fields span{border-bottom:1px solid var(--border);padding-bottom:2px;}
-  .ex-sources{font-size:.75rem;color:var(--dim);text-align:center;margin:-6px 0 14px;}
-  .ex-section-title{font-weight:700;margin:18px 0 6px;font-size:.95rem;border-bottom:1px solid var(--border);padding-bottom:4px;}
-  .ex-instr{font-size:.82rem;color:var(--dim);margin-bottom:8px;font-style:italic;}
-  .q{margin-bottom:12px;font-size:.92rem;line-height:1.5;}
-  .q b{margin-right:4px;}
-  .q .marks{float:left;color:var(--accent);font-size:.78rem;margin-right:6px;}
-  .q-diagram{margin:8px 0 8px 18px;max-width:280px;}
-  .q-diagram svg{width:100%;height:auto;border:1px solid var(--border);border-radius:6px;background:#fff;}
-  .opts{margin:4px 0 0 18px;font-size:.88rem;}
-  .opts div{margin-bottom:2px;}
-  .ex-sub{font-weight:700;font-size:.9rem;margin:14px 0 2px;}
-  .ex-sub-instr{font-size:.8rem;color:var(--dim);font-style:italic;margin-bottom:6px;}
-  .match-tbl{width:100%;border-collapse:collapse;margin:8px 0 0;font-size:.88rem;}
-  .match-tbl th,.match-tbl td{border:1px solid #444;padding:5px 7px;vertical-align:middle;text-align:start;}
-  .match-tbl th{background:var(--surface2);font-size:.82rem;}
-  .match-tbl .mn{width:28px;text-align:center;font-weight:700;}
-  .match-tbl .ma{width:64px;}
-  .bloom-tag{display:inline-block;background:var(--surface2);color:var(--dim);font-size:.68rem;padding:1px 7px;border-radius:20px;margin-left:6px;vertical-align:middle;}
-  .answerkey{margin-top:20px;border-top:1px dashed var(--border);padding-top:12px;}
-  .answerkey summary{cursor:pointer;font-weight:700;font-size:.88rem;color:var(--accent);}
-  .answerkey ol{font-size:.85rem;padding-left:20px;}
-  .lesson{border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:10px;background:var(--surface2);}
-  .lesson-top{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
-  .lesson-top label{display:flex;align-items:center;gap:6px;margin:0;font-size:.8rem;white-space:nowrap;}
-  .lesson-top input[type=checkbox]{width:auto;}
-  .lesson .row2{display:grid;grid-template-columns:2fr 1fr;gap:8px;margin-bottom:6px;}
-  .lesson .rm{background:transparent;color:var(--bad);border:1px solid var(--bad);padding:4px 10px;font-size:.75rem;margin-left:auto;}
-  .l-upload{display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap;}
-  .l-upload input[type=file]{width:auto;flex:1;min-width:160px;font-size:.78rem;padding:6px;}
-  .l-filestatus{font-size:.72rem;color:var(--dim);}
-  .l-ocr{background:var(--accent);color:#fff;font-size:.72rem;padding:4px 10px;display:none;}
-  .btn-add{background:var(--surface2);color:var(--accent);border:1px dashed var(--accent);width:100%;margin-top:4px;}
-  .diagram-toggle{display:flex;align-items:center;gap:8px;margin-top:4px;font-size:.85rem;}
-  .diagram-toggle input{width:auto;}
-  #loginScreen{max-width:320px;margin:70px auto;text-align:center;}
-  #loginScreen input{margin-bottom:10px;}
-  .saved-item{display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--border);font-size:.86rem;gap:8px;}
-  .saved-item:last-child{border-bottom:none;}
-  .saved-item .meta{color:var(--dim);font-size:.75rem;}
-  .saved-item .sv-btns{display:flex;gap:6px;flex-shrink:0;}
-  .saved-item button{padding:5px 9px;font-size:.72rem;}
-  #examOutput[dir=rtl]{text-align:right;}
-  #examOutput[dir=rtl] .q .marks{float:right;margin-right:0;margin-left:6px;}
-  #examOutput[dir=rtl] .opts{margin:4px 18px 0 0;}
-  #examOutput[dir=rtl] .q-diagram{margin:8px 18px 8px 0;}
-  #examOutput[dir=rtl] .bloom-tag{margin-left:0;margin-right:6px;}
-  .hint{font-size:.74rem;color:var(--dim);margin-top:3px;font-weight:400;}
-  .tabs{display:flex;gap:8px;margin:0 0 14px;}
-  .tabs button{flex:1;background:var(--surface2);color:var(--text);border:1px solid var(--border);}
-  .tabs button.on{background:var(--accent);color:#fff;border-color:var(--accent);}
-  #lpOut{margin-top:4px;}
-  .lp-page{background:#fff;border:1px solid var(--border);padding:12px;margin-bottom:14px;font-family:"Times New Roman",serif;font-size:.85rem;color:#000;}
-  .lp-img{width:100%;display:block;}
-  .lp-title{text-align:center;font-size:1.3rem;margin:4px 0 6px;font-family:Arial,sans-serif;}
-  .lp-grid{border:1px solid #000;}
-  .lp-h{text-align:center;font-weight:700;border-top:1px solid #000;border-bottom:1px solid #000;padding:3px;}
-  .lp-c{padding:4px 6px;}
-  .lp-v{padding:4px 8px;min-height:30px;line-height:1.45;}
-  .lp-info{display:flex;border-top:1px solid #000;}
-  .lp-info>div{flex:1 1 0;min-width:0;border-right:1px solid #000;text-align:center;}
-  .lp-info>div:last-child{border-right:none;} .lp-info>div.w{flex:2.2 1 0;}
-  .lp-info .il{font-weight:700;border-bottom:1px solid #000;padding:2px 3px;font-size:.9em;}
-  .lp-info .iv{padding:3px 4px;min-height:22px;overflow-wrap:anywhere;}
-  .lp-ev{display:grid;grid-template-columns:1fr 1fr;gap:4px 14px;}
-  .lp-tt{width:100%;border-collapse:collapse;border:1px solid #000;border-top:none;}
-  .lp-tt th,.lp-tt td{border:1px solid #000;padding:4px 8px;text-align:left;}
-  .lp-tt th{background:#f1f1f1;} .lp-tt .c{text-align:center;width:90px;}
-  .lp-note{border:1px solid #000;padding:10px 14px;line-height:1.55;}
-  .lp-nh2{text-align:center;font-weight:700;font-size:1rem;margin-bottom:8px;}
-  .lp-nh{font-weight:700;margin-top:8px;} .lp-note p{margin:2px 0;}
-  .lp-tmw{break-inside:avoid;page-break-inside:avoid;} .lp-tt tr{break-inside:avoid;page-break-inside:avoid;}
-  .lp-sign{display:flex;justify-content:space-between;align-items:flex-end;gap:20px;margin-top:22px;break-inside:avoid;page-break-inside:avoid;}
-  .lp-sign .sl{flex:1;font-weight:700;} .lp-sign .sl span{display:inline-block;border-bottom:1px solid #000;width:55%;min-width:120px;margin-left:6px;}
-  .lp-sign .st{width:120px;height:90px;border:1px dashed #000;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;}
-  .lp-nh{break-after:avoid;page-break-after:avoid;}
-  @media print{
-    @page{margin:10mm;}
-    .lp-page{border:none;padding:0;margin-bottom:8px;font-size:.8rem;}
-    .lp-page + .lp-page{margin-top:10px;} .lp-page + .lp-page .lp-img{display:none;}
-    .lp-v{min-height:0;padding:3px 8px;line-height:1.35;} .lp-tt th,.lp-tt td{padding:2px 8px;}
-    .lp-note{padding:6px 12px;line-height:1.4;}
+  const pw = req.header("x-admin-password");
+  if (pw !== process.env.ADMIN_PASSWORD) {
+    return res.status(401).json({ error: "unauthorized" });
   }
-  @media print{
-    body{background:#fff;color:#000;}
-    .no-print{display:none !important;}
-    #examOutput{border:none;padding:0;}
-    .bloom-tag{display:none;}
+  next();
+}
+
+app.post("/api/login", (req, res) => {
+  const { password } = req.body || {};
+  if (!process.env.ADMIN_PASSWORD) {
+    return res.status(500).json({ ok: false, error: "ADMIN_PASSWORD lama dejin server-ka." });
   }
+  if (password === process.env.ADMIN_PASSWORD) return res.json({ ok: true });
+  res.status(401).json({ ok: false });
+});
 
-  .lib-pick{border:1px dashed var(--border);border-radius:10px;padding:8px 10px;margin:8px 0;background:var(--bg);}
-  .lib-pick summary{cursor:pointer;font-size:.82rem;font-weight:700;color:var(--accent);}
-  .lib-pick .lib-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;}
-  .lib-pick .lib-chips button{padding:4px 9px;font-size:.72rem;background:var(--surface2);border:1px solid var(--border);color:var(--text);}
-  .lib-pick button.lib-act{padding:9px 12px;font-size:.82rem;}
-  .lib-cls{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 10px;}
-  .lib-cls button{padding:7px 12px;font-size:.8rem;background:var(--surface2);border:1px solid var(--border);color:var(--text);}
-  .lib-cls button.on{background:var(--accent);color:#fff;border-color:var(--accent);}
-  .lib-subj{font-weight:700;font-size:.85rem;margin:12px 0 2px;color:var(--accent2);}
-  .bar{height:7px;background:var(--surface2);border-radius:5px;overflow:hidden;margin-top:6px;}
-  .bar > i{display:block;height:100%;background:var(--good);width:0;transition:width .3s;}
-</style>
-</head>
-<body>
+// ---------- Doorashada AI: Claude ama Gemini ----------
+// Lacagta aad ku shubtay console.anthropic.com (doolar) — waxaa lagu xisaabiyaa hadhaagga Claude.
+const CREDIT_START = parseFloat(process.env.CREDIT_START_USD || "5");
+// Gemini bilaash (Google AI Studio free tier) = kharash 0. Haddii Google project-kaagu leeyahay billing, deji GEMINI_FREE_TIER=0
+const GEMINI_FREE = process.env.GEMINI_FREE_TIER !== "0";
+const GEMINI_BASE = process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta";
+const numEnv = (v, d) => {
+  const n = parseFloat(v);
+  return isNaN(n) ? d : n;
+};
 
-<div id="loginScreen" class="hidden">
-  <h1>📝 Samaynta Imtixaanka</h1>
-  <p class="sub">Geli password-ka maamulka</p>
-  <input type="password" id="pwInput" placeholder="Password">
-  <button class="btn-primary" id="loginBtn">Gal</button>
-  <div class="err hidden" id="loginErr"></div>
-</div>
+// Qiimaha = doolar halkii 1 milyan token. Hubi qiimaha rasmiga ah (claude.com/pricing, ai.google.dev/pricing).
+const AI_CHOICES = {
+  "gemini-lite": {
+    provider: "gemini",
+    label: "Gemini Flash-Lite (bilaash / ugu jaban)",
+    model: process.env.GEMINI_MODEL_LITE || "gemini-3.1-flash-lite",
+    priceIn: numEnv(process.env.GEMINI_LITE_PRICE_IN, 0.25),
+    priceOut: numEnv(process.env.GEMINI_LITE_PRICE_OUT, 1.5),
+    free: GEMINI_FREE,
+  },
+  "gemini-flash": {
+    provider: "gemini",
+    label: "Gemini Flash (tayo wanaagsan)",
+    model: process.env.GEMINI_MODEL_FLASH || "gemini-3.8-flash",
+    priceIn: numEnv(process.env.GEMINI_FLASH_PRICE_IN, 0.75),
+    priceOut: numEnv(process.env.GEMINI_FLASH_PRICE_OUT, 3.75),
+    free: GEMINI_FREE,
+  },
+  "claude-haiku": {
+    provider: "claude",
+    label: "Claude Haiku (jaban)",
+    model: process.env.CLAUDE_MODEL_HAIKU || "claude-haiku-4-5-20251001",
+    priceIn: numEnv(process.env.CLAUDE_HAIKU_PRICE_IN, 1),
+    priceOut: numEnv(process.env.CLAUDE_HAIKU_PRICE_OUT, 5),
+    free: false,
+  },
+  "claude-sonnet": {
+    provider: "claude",
+    label: "Claude Sonnet (tayo ugu sarreysa)",
+    model: process.env.CLAUDE_MODEL || "claude-sonnet-5",
+    priceIn: numEnv(process.env.PRICE_INPUT_PER_MTOK, 3),
+    priceOut: numEnv(process.env.PRICE_OUTPUT_PER_MTOK, 15),
+    free: false,
+  },
+};
 
-<div id="appShell" class="hidden">
-<div class="wrap">
-  <h1 class="no-print">📝 Samaynta Imtixaanka</h1>
-  <p class="sub no-print">Ku dheji ama soo geli buugga casharka, nidaamku wuxuu kuu dajin doonaa imtixaan heer-qaran ah oo ku dhisan Bloom's Taxonomy.</p>
-  <div id="usageBox" class="no-print" style="display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:10px;padding:8px 12px;margin:8px 0;font-size:14px">
-    <span id="usageText">💰 Hadhaaga: ...</span>
-    <select id="aiChoice" title="Dooro AI-ga" style="border:1px solid #cbd5e1;border-radius:8px;padding:4px 8px;background:#fff;max-width:100%"></select>
-    <button id="usageBtn" type="button" style="border:0;background:#e2e8f0;border-radius:8px;padding:4px 10px;cursor:pointer">🔄</button>
-  </div>
-  <div id="usageDetail" class="no-print hidden" style="font-size:13px;background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:8px 12px;margin-bottom:8px"></div>
-  <div class="tabs no-print">
-    <button id="tabExam" class="on" type="button">📝 Imtixaan</button>
-    <button id="tabLp" type="button">📘 Lesson Plan + Note</button>
-    <button id="tabLib" type="button">📚 Maktabadda</button>
-  </div>
-<div id="examTab">
-  <div class="card no-print">
-    <h2>📚 Imtixaanadii Hore</h2>
-    <div id="savedList" class="status">Waa la soo dejinayaa...</div>
-  </div>
+const keyAvailable = (c) => (c.provider === "gemini" ? !!process.env.GEMINI_API_KEY : !!process.env.ANTHROPIC_API_KEY);
 
-  <div class="card no-print" id="formCard">
-    <label style="margin-top:0;">Casharada / Cutubyada</label>
-    <div id="lessonsWrap"></div>
-    <button class="btn-add" id="addLessonBtn" type="button">➕ Ku dar Cashar/Cutub kale</button>
+// Doorashada hore (haddii aan la keydin): Gemini haddii key-giisa jiro, haddii kale Claude.
+let currentChoice = AI_CHOICES[process.env.AI_DEFAULT]
+  ? process.env.AI_DEFAULT
+  : process.env.GEMINI_API_KEY || !process.env.ANTHROPIC_API_KEY
+  ? "gemini-lite"
+  : "claude-sonnet";
 
-    <div class="row">
-      <div><label>Maadada</label><input id="subject" placeholder="tusaale: Bayoolaji"></div>
-      <div><label>Fasalka</label><input id="klass" placeholder="tusaale: Form 4"></div>
-    </div>
-    <div class="row3">
-      <div><label>A: Ikhtiyaar (MCQ)</label><input id="mcqN" type="number" min="0" max="60" placeholder="Otomaatig"></div>
-      <div><label>A: Meelaha banaan</label><input id="blankN" type="number" min="0" max="40" placeholder="Otomaatig"></div>
-      <div><label>A: Isku aad (tirada set-yada)</label><input id="matchN" type="number" min="0" max="6" placeholder="Otomaatig"></div>
-    </div>
-    <div class="row">
-      <div><label>B: Su'aalaha qaab-dhismeed</label><input id="structN" type="number" min="0" max="30" placeholder="Otomaatig"></div>
-      <div><label>Wadarta dhibcaha</label><input id="totalMarks" type="number" min="10" max="200" value="100"></div>
-    </div>
-    <div class="hint">Qaybta A (Ikhtiyaar + Meelaha banaan + Isku aad) = 60% dhibcaha, Qaybta B (qaab-dhismeed) = 40%. Set-ka isku-aadka kasta wuxuu leeyahay 5 lammaane. Haddii aadan qorin tirada su'aalaha, nidaamku wuxuu ka doortaa dherer qoraalka iyo wadarta dhibcaha. Qor 0 si aan loo samayn nooca ay tahay.</div>
-    <div class="row">
-      <div><label>Waqtiga imtixaanka</label><input id="duration" placeholder="tusaale: 2 saac / 2 hours"></div>
-      <div><label>Dugsiga</label><input id="schoolName" placeholder="Dugsiga Sare ee ..."></div>
-    </div>
-    <label>Luqadda imtixaanka</label>
-    <select id="langSel">
-      <option value="auto" selected>Otomaatig — raac luqadda casharka (tarjumaad la'aan)</option>
-      <option value="so">Soomaali</option>
-      <option value="en">English</option>
-      <option value="ar">العربية</option>
-    </select>
-    <label class="diagram-toggle">
-      <input type="checkbox" id="diagramToggle" checked>
-      📐 Ku dar sawiro/diagrams (sida kuwa imtixaanka Qaranka)
-    </label>
-    <div class="row" id="diagramOpts">
-      <div><label>Tirada diagrams-ka</label><input id="diagramCount" type="number" min="0" max="10" value="2"></div>
-      <div><label>Diagrams-ka ha ku saabsanaadeen (ikhtiyaari)</label><input id="diagramTopics" placeholder="tusaale: bilog, qalabka tijaabada, shaxan"></div>
-    </div>
+async function loadAiChoice() {
+  await pool.query(`CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '')`);
+  const r = await pool.query("SELECT value FROM app_settings WHERE key='ai_choice'");
+  if (r.rows[0] && AI_CHOICES[r.rows[0].value]) currentChoice = r.rows[0].value;
+  console.log("🤖 AI-ga la isticmaalayo:", currentChoice);
+}
+loadAiChoice().catch((e) => console.error("ai choice load error:", e.message));
 
-    <button class="btn-primary" id="genBtn">⚡ Samee Imtixaanka</button>
-    <div class="status" id="statusMsg"></div>
-    <div class="err hidden" id="errMsg"></div>
-  </div>
+app.get("/api/ai-choice", requireAdmin, (req, res) => {
+  res.json({
+    current: currentChoice,
+    options: Object.entries(AI_CHOICES).map(([id, c]) => ({
+      id,
+      label: c.label,
+      provider: c.provider,
+      model: c.model,
+      available: keyAvailable(c),
+      free: !!c.free,
+    })),
+  });
+});
 
-  <div id="examOutput" class="hidden"></div>
-  <div class="actions no-print hidden" id="resultActions">
-    <button class="btn-ghost" id="printBtn">🖨️ Daabac / Save PDF</button>
-    <button class="btn-ghost" id="newBtn">🔄 Imtixaan Cusub</button>
-  </div>
-</div><!-- /examTab -->
-<div id="libTab" class="hidden">
-  <div class="card no-print">
-    <h2>⬆️ Buug cusub geli</h2>
-    <div class="hint">Buug kasta mar keliya ayaa la geliyaa. Nidaamku wuxuu akhriyaa bog kasta (qoraalka ku jira ama OCR haddii sawir yahay), wuxuuna ku keydiyaa Postgres. Kadib lesson plan iyo imtixaan marka aad sameyneyso waad ka qaadan kartaa halkan — OCR dambe looma baahna. Haddii isla buugga mar kale la geliyo, boggagga hore loo dhammeeyay waa la ordayaa.</div>
-    <div class="row">
-      <div><label>Fasalka</label>
-        <select id="libClass">
-          <option>Form 1</option><option>Form 2</option><option>Form 3</option><option>Form 4</option>
-        </select></div>
-      <div><label>Maadada</label>
-        <input id="libSubject" list="libSubjectList" placeholder="tusaale: Mathematics">
-        <datalist id="libSubjectList"></datalist></div>
-    </div>
-    <label>Magaca buugga (ikhtiyaari)</label>
-    <input id="libTitle" placeholder="tusaale: Mathematics Form 1 — Student's Book">
-    <label>Faylka buugga (PDF)</label>
-    <input type="file" id="libFile" accept=".pdf">
-    <button class="btn-primary" id="libUpload">⬆️ Soo geli oo keydi OCR-ka</button>
-    <div class="bar"><i id="libBar"></i></div>
-    <div class="status" id="libStatus"></div>
-  </div>
-  <div class="card no-print">
-    <h2>📚 Buugaagta la keydiyay</h2>
-    <div class="lib-cls" id="libClsTabs"></div>
-    <div id="libList" class="status">Waa la soo dejinayaa...</div>
-  </div>
-</div>
-<div id="lpTab" class="hidden">
-  <div class="card no-print">
-    <h2>📚 Lesson Plan-yadii Hore</h2>
-    <div id="lpSaved" class="status">Waa la soo dejinayaa...</div>
-  </div>
-  <div class="card no-print">
-    <h2>📘 Samee Lesson Plan + Lesson Note</h2>
-    <div class="row">
-      <div><label>Teacher name</label><input id="lpTeacher"></div>
-      <div><label>Class</label><input id="lpClass" placeholder="Form 4"></div>
-    </div>
-    <div class="row">
-      <div><label>Subject</label><input id="lpSubject" placeholder="English"></div>
-      <div><label>Unit / Chapter</label><input id="lpUnit" placeholder="Unit 3"></div>
-    </div>
-    <label>Lesson (cinwaanka casharka)</label><input id="lpLesson" placeholder="tusaale: Present Perfect Tense">
-    <div class="row3">
-      <div><label>Date</label><input id="lpDate" type="date"></div>
-      <div><label>Day</label><input id="lpDay" placeholder="Monday"></div>
-      <div><label>Lesson/Session</label><input id="lpSession" placeholder="1/3"></div>
-    </div>
-    <div class="row3">
-      <div><label>Time</label><input id="lpDur" value="40 min"></div>
-      <div><label>Weekly</label><input id="lpWeekly" placeholder="5 periods"></div>
-      <div><label>Tirada objectives</label><input id="lpNObj" type="number" min="1" max="12" placeholder="Auto (raac buugga)"></div>
-    </div>
-    <label>Luqadda</label>
-    <select id="lpLang">
-      <option value="en" selected>English</option><option value="so">Soomaali</option>
-      <option value="ar">العربية</option><option value="auto">Otomaatig — raac qoraalka</option>
-    </select>
-    <details class="lib-pick" data-pick="lp" open>
-      <summary>📚 Ka qaado Maktabadda</summary>
-      <select class="lib-book"></select>
-      <div class="row">
-        <input class="lib-pages" placeholder="Bogagga (tusaale: 24-31)">
-        <input class="lib-q" placeholder="Ama raadi cutub/cashar">
-      </div>
-      <div class="row" style="margin-top:8px;">
-        <button type="button" class="btn-ghost lib-act lib-search">🔎 Raadi</button>
-        <button type="button" class="btn-ghost lib-act lib-fill">⬇️ Soo qaado qoraalka</button>
-      </div>
-      <div class="lib-chips"></div>
-      <div class="status lib-status"></div>
-    </details>
-    <label>Qoraalka casharka (ikhtiyaari — ku dar objectives-ka buugga si loo raaco)</label>
-    <textarea id="lpText" placeholder="Ku dheji qoraalka casharka halkan..."></textarea>
-    <button class="btn-primary" id="lpGen">⚡ Samee Lesson Plan + Note</button>
-    <div class="status" id="lpStatus"></div>
-    <div class="err hidden" id="lpErr"></div>
-  </div>
-  <div id="lpOut" class="hidden"></div>
-  <div class="actions no-print hidden" id="lpActions">
-    <button class="btn-ghost" id="lpPrint">🖨️ Daabac / Save PDF</button>
-  </div>
-  <div class="hint no-print hidden" id="lpHint">✏️ Qoraalka lesson plan-ka iyo note-ka waad wax ka bedeli kartaa (guji oo qor) ka hor intaadan daabicin.</div>
-</div>
-</div>
-</div>
-
-<script>
-(function(){
-  const $ = id => document.getElementById(id);
-  const PW_KEY = "imtixaan_admin_pw";
-  const getPw = () => localStorage.getItem(PW_KEY) || "";
-
-  async function api(path, opts){
-    opts = opts || {};
-    opts.headers = Object.assign({ "Content-Type":"application/json", "x-admin-password": getPw() }, opts.headers||{});
-    const res = await fetch(path, opts);
-    if (res.status === 401){ showLogin("Sirta waa qalad."); throw new Error("unauthorized"); }
-    const j = await res.json().catch(()=>({}));
-    if (!res.ok) throw new Error(j.error || "server error");
-    return j;
+app.post("/api/ai-choice", requireAdmin, async (req, res) => {
+  const id = req.body && req.body.choice;
+  const c = AI_CHOICES[id];
+  if (!c) return res.status(400).json({ error: "doorasho aan jirin" });
+  if (!keyAvailable(c)) {
+    const k = c.provider === "gemini" ? "GEMINI_API_KEY" : "ANTHROPIC_API_KEY";
+    return res.status(400).json({ error: `${k} lama dejin Variables-ka Railway.` });
   }
-
-  function showLogin(msg){
-    $("loginScreen").classList.remove("hidden");
-    $("appShell").classList.add("hidden");
-    if (msg){ $("loginErr").textContent = msg; $("loginErr").classList.remove("hidden"); }
+  currentChoice = id;
+  try {
+    await pool.query(
+      "INSERT INTO app_settings (key, value) VALUES ('ai_choice', $1) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value",
+      [id]
+    );
+  } catch (e) {
+    console.error("ai choice save error:", e.message);
   }
-  function showApp(){
-    $("loginScreen").classList.add("hidden");
-    $("appShell").classList.remove("hidden");
+  res.json({ ok: true, current: id });
+});
+
+// ---------- Kharashka & hadhaaga lacagta ----------
+async function recordUsage(c, inT, outT, label) {
+  try {
+    const cost = c.free ? 0 : (inT * c.priceIn + outT * c.priceOut) / 1e6;
+    await pool.query(
+      "INSERT INTO api_usage (model, label, input_tokens, output_tokens, cost_usd) VALUES ($1,$2,$3,$4,$5)",
+      [c.model, label || "", inT, outT, cost]
+    );
+  } catch (e) {
+    console.error("usage log error:", e.message);
   }
+}
 
-
-  async function loadUsage(){
-    try{
-      const u = await api("/api/usage");
-      const f = n => "$" + Number(n).toFixed(4);
-      let gem = " · Gemini: " + u.gemini_calls + " call";
-      gem += u.gemini_cost > 0 ? " (" + f(u.gemini_cost) + ")" : " (bilaash)";
-      $("usageText").textContent = "💰 Claude hadhay: $" + u.remaining.toFixed(2) + " / $" + u.start.toFixed(2) + gem;
-      const rows = (u.last||[]).map(r => "• " + (r.model||"") + " · " + (r.label||"call") + ": " + r.input_tokens + " in / " + r.output_tokens + " out = " + (r.cost > 0 ? f(r.cost) : "bilaash")).join("<br>");
-      $("usageDetail").innerHTML = "<b>Claude la isticmaalay:</b> " + f(u.claude_spent) + " (" + u.claude_calls + " call)<br><br><b>10-kii ugu dambeeyay:</b><br>" + (rows || "Weli wax call ah ma jiro.");
-    }catch(e){}
+app.get("/api/usage", requireAdmin, async (req, res) => {
+  try {
+    const tot = await pool.query(`SELECT
+        COALESCE(SUM(cost_usd) FILTER (WHERE model LIKE 'claude%'),0)::float AS claude_spent,
+        COUNT(*) FILTER (WHERE model LIKE 'claude%')::int AS claude_calls,
+        COALESCE(SUM(cost_usd) FILTER (WHERE model NOT LIKE 'claude%'),0)::float AS gemini_cost,
+        COUNT(*) FILTER (WHERE model NOT LIKE 'claude%')::int AS gemini_calls
+      FROM api_usage`);
+    const last = await pool.query(
+      "SELECT model, label, input_tokens, output_tokens, cost_usd::float AS cost, created_at FROM api_usage ORDER BY id DESC LIMIT 10"
+    );
+    const t = tot.rows[0];
+    res.json({
+      start: CREDIT_START,
+      claude_spent: t.claude_spent,
+      remaining: Math.max(0, CREDIT_START - t.claude_spent),
+      claude_calls: t.claude_calls,
+      gemini_cost: t.gemini_cost,
+      gemini_calls: t.gemini_calls,
+      current: currentChoice,
+      last: last.rows,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
+});
 
-  async function loadChoice(){
-    try{
-      const j = await api("/api/ai-choice");
-      const sel = $("aiChoice");
-      sel.innerHTML = "";
-      j.options.forEach(o => {
-        const opt = document.createElement("option");
-        opt.value = o.id;
-        opt.textContent = (o.provider === "gemini" ? "🟦 " : "🟧 ") + o.label + (o.available ? "" : " — key ma jiro");
-        opt.disabled = !o.available;
-        sel.appendChild(opt);
+// ---------- AI helper (Claude + Gemini) ----------
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Xaddid tirada codsiyada Gemini ee isku mar socda (free tier wuxuu leeyahay xad daqiiqadeed).
+function makeGate(max) {
+  let active = 0;
+  const q = [];
+  const next = () => {
+    if (active >= max || !q.length) return;
+    active++;
+    const { fn, resolve, reject } = q.shift();
+    fn()
+      .then(resolve, reject)
+      .finally(() => {
+        active--;
+        next();
       });
-      sel.value = j.current;
-    }catch(e){}
-  }
-  $("aiChoice").addEventListener("change", async (e)=>{
-    try{
-      await api("/api/ai-choice", { method:"POST", body: JSON.stringify({ choice: e.target.value }) });
-    }catch(err){ alert(err.message); }
-    loadChoice(); loadUsage();
-  });
-  $("usageBtn").addEventListener("click", ()=>{ $("usageDetail").classList.toggle("hidden"); loadUsage(); });
-
-  async function boot(){
-    const pw = getPw();
-    if (!pw){ showLogin(); return; }
-    try{
-      const j = await fetch("/api/login", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({password:pw}) }).then(r=>r.json());
-      if (j.ok){ showApp(); loadSavedExams(); libReload(); loadUsage(); loadChoice(); setInterval(loadUsage, 20000); }
-      else showLogin();
-    } catch(e){ showLogin("Khalad xidhiidh server ah."); }
-  }
-
-  $("loginBtn").addEventListener("click", async ()=>{
-    const pw = $("pwInput").value;
-    try{
-      const res = await fetch("/api/login", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({password:pw}) });
-      const j = await res.json();
-      if (j.ok){ localStorage.setItem(PW_KEY, pw); showApp(); loadSavedExams(); libReload(); loadUsage(); loadChoice(); setInterval(loadUsage, 20000); }
-      else { $("loginErr").textContent = "Sirta waa qalad."; $("loginErr").classList.remove("hidden"); }
-    } catch(e){ $("loginErr").textContent = "Khalad server ah."; $("loginErr").classList.remove("hidden"); }
-  });
-
-  // ---------- Saved exams ----------
-  async function loadSavedExams(){
-    const el = $("savedList");
-    try{
-      const rows = await api("/api/exams");
-      if (!rows.length){ el.textContent = "Wali imtixaan lama keydin."; return; }
-      el.innerHTML = rows.map(r=>`
-        <div class="saved-item">
-          <div>
-            <b>${esc(r.subject)}</b> — ${esc(r.class_name)}
-            <div class="meta">${esc(r.sources||"")} · ${new Date(r.created_at).toLocaleDateString()}</div>
-          </div>
-          <div class="sv-btns">
-            <button class="btn-ghost" data-load="${r.id}">👁️ Fur</button>
-            <button class="btn-ghost" data-del="${r.id}" style="color:var(--bad);">🗑️</button>
-          </div>
-        </div>`).join("");
-      el.querySelectorAll("[data-load]").forEach(b=>b.addEventListener("click", ()=>loadExam(b.dataset.load)));
-      el.querySelectorAll("[data-del]").forEach(b=>b.addEventListener("click", async ()=>{
-        if (!confirm("Ma hubtaa inaad tirtirto imtixaankan?")) return;
-        await api("/api/exams/"+b.dataset.del, {method:"DELETE"});
-        loadSavedExams();
-      }));
-    } catch(e){ el.textContent = "⚠️ Khalad soo dejin ah."; }
-  }
-  async function loadExam(id){
-    try{
-      const row = await api("/api/exams/"+id);
-      const data = row.data || {};
-      renderExam(data, data.meta || { subject: row.subject, klass: row.class_name, totalMarks: row.total_marks, duration: row.duration, sourcesLabel: row.sources });
-      window.scrollTo({top: document.getElementById("examOutput").offsetTop - 10, behavior:"smooth"});
-    } catch(e){ alert("Khalad: " + e.message); }
-  }
-
-  // ---------- Maktabadda Manhajka ----------
-  const DEFAULT_SUBJECTS = ["Somali","Arabic","English","Islamic Studies","Mathematics","Physics","Chemistry","Biology","History","Geography","Business","Computer / ICT"];
-  let libBooks = [];
-  let libClassFilter = "";
-  function libFillSubjects(){
-    const names = Array.from(new Set(DEFAULT_SUBJECTS.concat(libBooks.map(b=>b.subject)))).sort();
-    $("libSubjectList").innerHTML = names.map(n=>`<option value="${esc(n)}">`).join("");
-  }
-  function libBookLabel(b){ return `${b.class_name} — ${b.subject} — ${b.title}` + (b.pages_done < b.num_pages ? ` (${b.pages_done}/${b.num_pages} bog)` : ""); }
-  function libRefreshPickers(){
-    document.querySelectorAll(".lib-pick .lib-book").forEach(sel=>{
-      const cur = sel.value;
-      sel.innerHTML = `<option value="">— Dooro buugga —</option>` +
-        libBooks.map(b=>`<option value="${b.id}">${esc(libBookLabel(b))}</option>`).join("");
-      if (cur) sel.value = cur;
-    });
-  }
-  async function libReload(){
-    try{ libBooks = await api("/api/library"); } catch(e){ libBooks = []; }
-    libFillSubjects(); libRefreshPickers();
-  }
-  async function libLoad(){
-    await libReload();
-    libRenderList();
-  }
-  function libRenderList(){
-    const el = $("libList");
-    const classes = Array.from(new Set(libBooks.map(b=>b.class_name))).sort();
-    if (!libBooks.length){ el.textContent = "Wali buug lama geliyin."; $("libClsTabs").innerHTML = ""; return; }
-    if (!libClassFilter || !classes.includes(libClassFilter)) libClassFilter = classes[0];
-    $("libClsTabs").innerHTML = classes.map(c=>`<button type="button" data-c="${esc(c)}" class="${c===libClassFilter?"on":""}">${esc(c)} (${libBooks.filter(b=>b.class_name===c).length})</button>`).join("");
-    $("libClsTabs").querySelectorAll("button").forEach(b=>b.addEventListener("click", ()=>{ libClassFilter = b.dataset.c; libRenderList(); }));
-    const bySubj = {};
-    libBooks.filter(b=>b.class_name===libClassFilter).forEach(b=>{ (bySubj[b.subject] = bySubj[b.subject] || []).push(b); });
-    el.innerHTML = Object.keys(bySubj).sort().map(sj=>`<div class="lib-subj">${esc(sj)}</div>` + bySubj[sj].map(b=>{
-      const done = b.pages_done >= b.num_pages && b.num_pages > 0;
-      return `<div class="saved-item"><div><b>${esc(b.title)}</b>
-        <div class="meta">${done ? "✅" : "⚠️"} ${b.pages_done}/${b.num_pages} bog la keydiyay${done ? "" : " — mar kale geli isla faylka si uu u dhammaado"}</div></div>
-        <div class="sv-btns"><button class="btn-ghost" data-del="${b.id}" style="color:var(--bad);">🗑️</button></div></div>`;
-    }).join("")).join("");
-    el.querySelectorAll("[data-del]").forEach(b=>b.addEventListener("click", async ()=>{
-      if (!confirm("Ma hubtaa inaad tirtirto buuggan iyo OCR-kiisa la keydiyay?")) return;
-      await api("/api/library/"+b.dataset.del, {method:"DELETE"});
-      libLoad();
-    }));
-  }
-  async function libUpload(){
-    const file = $("libFile").files[0];
-    const cls = $("libClass").value, subj = $("libSubject").value.trim();
-    const title = $("libTitle").value.trim() || (file ? file.name.replace(/\.pdf$/i,"") : "");
-    const st = $("libStatus"), bar = $("libBar"), btn = $("libUpload");
-    if (!file){ st.textContent = "⚠️ Fadlan dooro faylka PDF."; return; }
-    if (!/\.pdf$/i.test(file.name)){ st.textContent = "⚠️ Maktabaddu waxay aqbashaa PDF keliya."; return; }
-    if (!subj){ st.textContent = "⚠️ Fadlan geli maadada."; return; }
-    btn.disabled = true; bar.style.width = "0";
-    try{
-      st.textContent = "⏳ Buugga waa la akhrinayaa...";
-      await loadScript("https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js");
-      window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
-      const buf = await file.arrayBuffer();
-      const hash = await fileHash(file, buf);
-      const pdf = await window.pdfjsLib.getDocument({data: buf.slice(0)}).promise;
-      const total = pdf.numPages;
-      const reg = await api("/api/library", {method:"POST", body: JSON.stringify({ docHash: hash, className: cls, subject: subj, title, numPages: total })});
-      const done = new Set((await api("/api/library/"+reg.id+"/done")).pages);
-      const todo = [];
-      for (let i=1;i<=total;i++) if (!done.has(i)) todo.push(i);
-      let finished = done.size, failed = [];
-      const tick = (msg)=>{ bar.style.width = Math.round(finished/total*100)+"%"; st.textContent = msg; };
-      tick(`⏳ ${finished}/${total} bog ayaa horay u diyaar ahaa; ${todo.length} bog ayaa hadhay...`);
-      // 1) Kala saar: bogag qoraal leh (si toos ah) vs bogag sawir ah (OCR)
-      let textBatch = {}, textCount = 0, ocrQueue = [];
-      async function flushText(){
-        if (!textCount) return;
-        await api("/api/library/"+reg.id+"/store-pages", {method:"POST", body: JSON.stringify({pages:textBatch})});
-        finished += textCount; textBatch = {}; textCount = 0;
-        tick(`⏳ ${finished}/${total} bog la keydiyay...`);
-      }
-      for (const n of todo){
-        const page = await pdf.getPage(n);
-        const content = await page.getTextContent();
-        const t = content.items.map(it=>it.str).join(" ").replace(/\s+/g," ").trim();
-        if (t.length >= 40){ textBatch[n] = t; textCount++; if (textCount >= 25) await flushText(); }
-        else ocrQueue.push(n);
-      }
-      await flushText();
-      // 2) OCR bogagga sawirka ah (4 mar kasta; marka bog la dhammeeyo waa la keydiyaa)
-      const BATCH = 4;
-      for (let i=0;i<ocrQueue.length;i+=BATCH){
-        const nums = ocrQueue.slice(i,i+BATCH);
-        tick(`🔍 OCR: ${finished}/${total} bog — waa la akhrinayaa ${nums[0]}–${nums[nums.length-1]}...`);
-        const pages = [];
-        for (const n of nums){
-          const page = await pdf.getPage(n);
-          const viewport = page.getViewport({scale: 1.6});
-          const canvas = document.createElement("canvas");
-          canvas.width = viewport.width; canvas.height = viewport.height;
-          await page.render({canvasContext: canvas.getContext("2d"), viewport}).promise;
-          pages.push({ num:n, image: canvas.toDataURL("image/png").split(",")[1] });
-        }
-        let ok = false;
-        for (let attempt=0; attempt<2 && !ok; attempt++){
-          try{
-            const r = await api("/api/ocr-pages", {method:"POST", body: JSON.stringify({docHash: hash, docName: title, pages, mediaType:"image/png"})});
-            finished += nums.filter(n=>r.pages && r.pages[n]).length;
-            nums.forEach(n=>{ if (!(r.pages && r.pages[n])) failed.push(n); });
-            ok = true;
-          }catch(e){ if (attempt===1) failed.push(...nums); }
-        }
-        tick(`🔍 OCR: ${finished}/${total} bog la keydiyay...`);
-      }
-      const blanks = failed.length;
-      bar.style.width = Math.round(finished/total*100)+"%";
-      st.textContent = blanks
-        ? `⚠️ ${finished}/${total} bog ayaa la keydiyay. ${blanks} bog (kuwa madhan ama khalad) lama keydin: ${failed.slice(0,15).join(", ")}${blanks>15?"...":""}. Mar kale geli isla faylka si loogu celiyo.`
-        : `✅ Buugga waa dhammaaday — ${total} bog ayaa la keydiyay.`;
-      $("libFile").value = "";
-      await libLoad();
-    }catch(e){
-      st.textContent = "⚠️ Khalad: " + e.message + " (boggagga hore loo dhammeeyay waa la keydiyay; mar kale geli isla faylka si uu uga sii socdo.)";
-    } finally { btn.disabled = false; }
-  }
-  $("libUpload").addEventListener("click", libUpload);
-
-  // Picker: ka qaado qoraalka buug Maktabadda ah (lesson plan iyo imtixaan)
-  function initPicker(root, t){
-    const sel = root.querySelector(".lib-book"), st = root.querySelector(".lib-status"), chips = root.querySelector(".lib-chips");
-    const q = root.querySelector(".lib-q");
-    const pagesInput = () => (root.querySelector(".lib-pages") || t.pages());
-    const book = () => libBooks.find(b=>b.id===sel.value);
-    libRefreshPickers();
-    sel.addEventListener("change", ()=>{
-      const b = book(); chips.innerHTML = ""; st.textContent = "";
-      if (!b) return;
-      if (t.klass && t.klass() && !t.klass().value) t.klass().value = b.class_name;
-      if (t.subject && t.subject() && !t.subject().value) t.subject().value = b.subject;
-    });
-    root.querySelector(".lib-search").addEventListener("click", async ()=>{
-      const b = book(); if (!b){ st.textContent = "⚠️ Marka hore dooro buugga."; return; }
-      const term = q.value.trim(); if (term.length < 2){ st.textContent = "⚠️ Qor ugu yaraan 2 xaraf."; return; }
-      st.textContent = "⏳ Waa la raadinayaa...";
-      try{
-        const r = await api(`/api/library/${b.id}/search?q=${encodeURIComponent(term)}`);
-        chips.innerHTML = "";
-        if (!r.hits.length){ st.textContent = "Wax lagama helin buuggan."; return; }
-        st.textContent = `La helay ${r.hits.length} bog — guji lambarka si aad ugu darto bogagga:`;
-        r.hits.forEach(h=>{
-          const bt = document.createElement("button"); bt.type = "button"; bt.textContent = "p." + h.page; bt.title = h.snippet;
-          bt.addEventListener("click", ()=>{
-            const pi = pagesInput(); pi.value = pi.value.trim() ? pi.value.trim() + "," + h.page : String(h.page);
-          });
-          chips.appendChild(bt);
-        });
-      }catch(e){ st.textContent = "⚠️ " + e.message; }
-    });
-    root.querySelector(".lib-fill").addEventListener("click", async ()=>{
-      const b = book(); if (!b){ st.textContent = "⚠️ Marka hore dooro buugga."; return; }
-      const pg = pagesInput().value.trim();
-      st.textContent = "⏳ Waa la soo qaadayaa...";
-      try{
-        const r = await api(`/api/library/${b.id}/text?pages=${encodeURIComponent(pg)}`);
-        if (!r.text.trim()){ st.textContent = "⚠️ Bogagga la doortay qoraal looma keydin."; return; }
-        t.text().value = r.text;
-        if (root.dataset.pick === "exam" && t.pages() && pg) t.pages().value = pg;
-        if (t.klass && t.klass() && !t.klass().value) t.klass().value = b.class_name;
-        if (t.subject && t.subject() && !t.subject().value) t.subject().value = b.subject;
-        st.textContent = `✅ ${r.found} bog ayaa la geliyay` + (r.missing.length ? ` · ⚠️ bogagga aan la keydin: ${r.missing.join(", ")}` : "") + (r.truncated ? " · qoraalka waa la gaabiyay (xad)." : "") + (pg ? "" : " (buugga oo dhan, ilaa xadka)");
-      }catch(e){ st.textContent = "⚠️ " + e.message; }
-    });
-  }
-
-  // ---------- Lesson blocks (manual text, file upload, OCR for scanned PDFs) ----------
-  const lessonsWrap = $("lessonsWrap");
-  let lessonSeq = 0;
-  const pdfPagesMap = new Map();  // lessonId -> extracted text per page
-  const pdfDocMap = new Map();    // lessonId -> pdf.js document proxy (for OCR re-render)
-  const pdfHashMap = new Map();   // lessonId -> {hash, name} (furaha keydka OCR)
-  async function fileHash(file, buf){
-    try{
-      if (window.crypto && crypto.subtle){
-        const d = await crypto.subtle.digest("SHA-256", buf);
-        return Array.from(new Uint8Array(d)).map(b=>b.toString(16).padStart(2,"0")).join("");
-      }
-    } catch(e){}
-    return "fallback-" + file.name + "-" + file.size;
-  }
-  const loadedScripts = {};
-  function loadScript(url){
-    if (loadedScripts[url]) return loadedScripts[url];
-    loadedScripts[url] = new Promise((res, rej)=>{
-      const s = document.createElement("script");
-      s.src = url; s.onload = res; s.onerror = ()=>rej(new Error("load failed: "+url));
-      document.head.appendChild(s);
-    });
-    return loadedScripts[url];
-  }
-  function parsePageRange(str, max){
-    const out = new Set();
-    (str||"").split(",").forEach(part=>{
-      part = part.trim(); if (!part) return;
-      const m = part.match(/^(\d+)\s*-\s*(\d+)$/);
-      if (m){ let a=parseInt(m[1],10), b=parseInt(m[2],10); if(a>b)[a,b]=[b,a];
-        for(let i=a;i<=b && i<=max;i++) out.add(i);
-      } else { const n = parseInt(part,10); if (n>=1 && n<=max) out.add(n); }
-    });
-    return Array.from(out).sort((a,b)=>a-b);
-  }
-  async function fillFromPdfPages(lessonId, div){
-    const pages = pdfPagesMap.get(lessonId);
-    if (!pages) return;
-    const rangeStr = div.querySelector(".l-pages").value.trim();
-    const status = div.querySelector(".l-filestatus");
-    const ocrBtn = div.querySelector(".l-ocr");
-    const nums = rangeStr ? parsePageRange(rangeStr, pages.length) : pages.map((_,i)=>i+1);
-    const text = nums.map(n=>pages[n-1]||"").join("\n\n");
-    div.querySelector(".l-text").value = text;
-    const avgLen = text.length / Math.max(1, nums.length);
-    if (avgLen < 15){
-      ocrBtn.style.display = "inline-block";
-      const ocrNums = ocrTargetPages(div, pages.length);
-      let cachedCount = 0;
-      try{
-        const c = await fetchOcrCache(lessonId, ocrNums);
-        cachedCount = ocrNums.filter(n=>c[n]!==undefined).length;
-        if (cachedCount === ocrNums.length && cachedCount){
-          div.querySelector(".l-text").value = ocrNums.map(n=>c[n]||"").filter(Boolean).join("\n\n");
-          status.textContent = `✅ Buuggan hore ayaa loo akhriyay — ${cachedCount} bog ayaa keydka laga helay (OCR cusub lagama baahna).`;
-          return;
-        }
-      } catch(e){}
-      status.textContent = `⚠️ Buuggu wuxuu u muuqdaa mid sawir ah (scanned) — ${pages.length} bog. ` +
-        (cachedCount ? `${cachedCount}/${ocrNums.length} bog ayaa keydka ku jira; ` : "") + `taabo "🔍 Akhri Sawirka (OCR)" ${ocrNums.length - cachedCount} bog oo cusub.`;
-    } else {
-      status.textContent = `✅ ${pages.length} bog oo buuggu leeyahay — ${nums.length} bog ayaa la geliyay.`;
-      ocrBtn.style.display = "none";
-    }
-  }
-  // Boggagga OCR loo samaynayo: haddii bogag la qoray waa kuwaas; haddii kale 20-ka bog ee ugu horreeya.
-  function ocrTargetPages(div, numPages){
-    const rangeStr = div.querySelector(".l-pages").value.trim();
-    return rangeStr ? parsePageRange(rangeStr, numPages) : Array.from({length: Math.min(numPages,20)}, (_,i)=>i+1);
-  }
-  async function fetchOcrCache(lessonId, nums){
-    const h = pdfHashMap.get(lessonId);
-    if (!h || !nums.length) return {};
-    const r = await api("/api/ocr-cache", { method:"POST", body: JSON.stringify({ docHash: h.hash, pages: nums }) });
-    return r.pages || {};
-  }
-  async function runOcr(lessonId, div){
-    const pdf = pdfDocMap.get(lessonId);
-    if (!pdf) return;
-    const h = pdfHashMap.get(lessonId) || {};
-    const status = div.querySelector(".l-filestatus");
-    const nums = ocrTargetPages(div, pdf.numPages);
-    if (!nums.length){ status.textContent = "⚠️ Fadlan geli bogagga aad rabto (tusaale: 1-5)."; return; }
-    try{
-      // 1) Marka hore keydka eeg — boggagga hore loo akhriyay dib looma akhrinayo
-      status.textContent = "⏳ Keydka waa la eegayaa...";
-      const texts = Object.assign({}, await fetchOcrCache(lessonId, nums));
-      const cachedCount = nums.filter(n=>texts[n]!==undefined).length;
-      const missing = nums.filter(n=>texts[n]===undefined);
-
-      // 2) Kuwa cusub oo keliya OCR u samee
-      const BATCH = 4;
-      let done = 0;
-      for (let i=0; i<missing.length; i+=BATCH){
-        status.textContent = `⏳ OCR: ${done}/${missing.length} bog cusub (${cachedCount} bog keydka laga qaaday)...`;
-        const batch = missing.slice(i, i+BATCH);
-        const pages = [];
-        for (const pageNum of batch){
-          const page = await pdf.getPage(pageNum);
-          const viewport = page.getViewport({scale: 1.6});
-          const canvas = document.createElement("canvas");
-          canvas.width = viewport.width; canvas.height = viewport.height;
-          await page.render({canvasContext: canvas.getContext("2d"), viewport}).promise;
-          pages.push({ num: pageNum, image: canvas.toDataURL("image/png").split(",")[1] });
-        }
-        const r = await api("/api/ocr-pages", { method:"POST", body: JSON.stringify({ docHash: h.hash||"", docName: h.name||"", pages, mediaType:"image/png" }) });
-        Object.keys(r.pages||{}).forEach(k=>{ texts[k] = r.pages[k]; });
-        done += batch.length;
-        // Qoraalka ilaa hadda la helay isla markiiba muuji (haddii wax khaldamaan, waxa la keydiyay ma lumayo)
-        div.querySelector(".l-text").value = nums.map(n=>texts[n]||"").filter(Boolean).join("\n\n");
-      }
-      const full = nums.map(n=>texts[n]||"").filter(Boolean).join("\n\n");
-      div.querySelector(".l-text").value = full;
-      status.textContent = full.trim()
-        ? `✅ ${nums.length} bog ayaa diyaar ah — ${cachedCount} keydka laga helay, ${missing.length} cusub ayaa la akhriyay oo la keydiyay.`
-        : "⚠️ Wax qoraal ah lagama helin sawirrada.";
-    } catch(e){
-      status.textContent = "⚠️ Khalad OCR ah: " + e.message + " (boggagga hore loo dhammeeyay waa la keydiyay; mar kale taabo OCR si uu uga sii socdo.)";
-    }
-  }
-  async function handleFile(file, lessonId, div){
-    const status = div.querySelector(".l-filestatus");
-    const ocrBtn = div.querySelector(".l-ocr");
-    ocrBtn.style.display = "none";
-    const name = file.name.toLowerCase();
-    try{
-      if (name.endsWith(".pdf")){
-        status.textContent = "⏳ Buugga (PDF) waa la akhrinayaa...";
-        await loadScript("https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js");
-        window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
-        const buf = await file.arrayBuffer();
-        pdfHashMap.set(lessonId, { hash: await fileHash(file, buf), name: file.name });
-        const pdf = await window.pdfjsLib.getDocument({data: buf.slice(0)}).promise;
-        pdfDocMap.set(lessonId, pdf);
-        const pages = [];
-        for (let i=1;i<=pdf.numPages;i++){
-          const page = await pdf.getPage(i);
-          const content = await page.getTextContent();
-          pages.push(content.items.map(it=>it.str).join(" "));
-        }
-        pdfPagesMap.set(lessonId, pages);
-        await fillFromPdfPages(lessonId, div);
-      } else if (name.endsWith(".docx")){
-        status.textContent = "⏳ Buugga (DOCX) waa la akhrinayaa...";
-        await loadScript("https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js");
-        const buf = await file.arrayBuffer();
-        const res = await window.mammoth.extractRawText({arrayBuffer: buf});
-        div.querySelector(".l-text").value = res.value || "";
-        status.textContent = res.value ? "✅ DOCX la akhriyay — gacanta ka saar waxa aan loo baahnayn." : "⚠️ Wax qoraal ah lagama helin.";
-      } else {
-        const txt = await file.text();
-        div.querySelector(".l-text").value = txt;
-        status.textContent = "✅ La akhriyay.";
-      }
-    } catch(e){
-      status.textContent = "⚠️ Khalad akhrin ah: " + e.message;
-    }
-  }
-
-  function addLesson(){
-    lessonSeq++;
-    const id = "lesson" + lessonSeq;
-    const div = document.createElement("div");
-    div.className = "lesson";
-    div.id = id;
-    div.innerHTML = `
-      <div class="lesson-top">
-        <label><input type="checkbox" class="l-inc" checked> Ku dar</label>
-        <button type="button" class="l-ocr">🔍 Akhri Sawirka (OCR)</button>
-        <button type="button" class="rm">🗑️ Ka saar</button>
-      </div>
-      <div class="row2">
-        <input class="l-chapter" placeholder="Magaca Cutubka/Casharka (tusaale: Cutubka 3)">
-        <input class="l-pages" placeholder="Bogagga (tusaale: 24-31)">
-      </div>
-      <details class="lib-pick" data-pick="exam">
-        <summary>📚 Ka qaado Maktabadda</summary>
-        <select class="lib-book"></select>
-        <input class="lib-q" placeholder="Raadi cutub/cashar (ikhtiyaari)" style="margin-top:8px;">
-        <div class="row" style="margin-top:8px;">
-          <button type="button" class="btn-ghost lib-act lib-search">🔎 Raadi</button>
-          <button type="button" class="btn-ghost lib-act lib-fill">⬇️ Soo qaado (bogagga kor ku qoran)</button>
-        </div>
-        <div class="lib-chips"></div>
-        <div class="status lib-status"></div>
-      </details>
-      <div class="l-upload">
-        <input type="file" class="l-file" accept=".pdf,.docx,.txt,.md">
-        <span class="l-filestatus"></span>
-      </div>
-      <textarea class="l-text" placeholder="...ama ku dheji halkan qoraalka gacanta"></textarea>`;
-    lessonsWrap.appendChild(div);
-    div.querySelector(".rm").addEventListener("click", ()=>{
-      pdfPagesMap.delete(id); pdfDocMap.delete(id); pdfHashMap.delete(id);
-      if (lessonsWrap.children.length > 1) div.remove();
-      else { div.querySelector(".l-text").value=""; div.querySelector(".l-chapter").value=""; div.querySelector(".l-pages").value=""; div.querySelector(".l-filestatus").textContent=""; }
-    });
-    div.querySelector(".l-file").addEventListener("change", (e)=>{
-      const f = e.target.files[0]; if (f) handleFile(f, id, div);
-    });
-    div.querySelector(".l-pages").addEventListener("change", ()=>{
-      if (pdfPagesMap.has(id)) fillFromPdfPages(id, div);
-    });
-    div.querySelector(".l-ocr").addEventListener("click", ()=>runOcr(id, div));
-    initPicker(div.querySelector(".lib-pick"), {
-      pages: ()=>div.querySelector(".l-pages"),
-      text: ()=>div.querySelector(".l-text"),
-      subject: ()=>$("subject"), klass: ()=>$("klass"),
-      chapter: ()=>div.querySelector(".l-chapter")
-    });
-  }
-  addLesson();
-  $("addLessonBtn").addEventListener("click", ()=>addLesson());
-
-  function collectLessons(){
-    return Array.from(lessonsWrap.querySelectorAll(".lesson")).map(div=>({
-      include: div.querySelector(".l-inc").checked,
-      chapter: div.querySelector(".l-chapter").value.trim(),
-      pages: div.querySelector(".l-pages").value.trim(),
-      text: div.querySelector(".l-text").value.trim()
-    })).filter(l=>l.include && l.text);
-  }
-
-  // ---------- Generate ----------
-  const genBtn = $("genBtn"), statusMsg = $("statusMsg"), errMsg = $("errMsg");
-  const examOutput = $("examOutput"), resultActions = $("resultActions"), formCard = $("formCard");
-
-  function esc(s){ return String(s==null?"":s).replace(/[&<>"]/g, m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m])); }
-  function sanitizeSvg(svg){
-    return String(svg||"").replace(/<script[\s\S]*?<\/script>/gi,"").replace(/\son\w+\s*=\s*"[^"]*"/gi,"").replace(/\son\w+\s*=\s*'[^']*'/gi,"");
-  }
-  function showErr(msg){ errMsg.textContent = "⚠️ " + msg; errMsg.classList.remove("hidden"); }
-  function hideErr(){ errMsg.classList.add("hidden"); errMsg.textContent = ""; }
-
-  async function generate(){
-    const lessons = collectLessons();
-    if (!lessons.length){ showErr("Fadlan ku dheji ama soo geli qoraalka ugu yaraan hal cashar/cutub."); return; }
-    hideErr();
-    genBtn.disabled = true;
-    statusMsg.textContent = "⏳ Fadlan sug, waa la dejinayaa imtixaanka... (dhawaan 20-60 ilbiriqsi)";
-    examOutput.classList.add("hidden");
-    resultActions.classList.add("hidden");
-
-    const body = {
-      subject: $("subject").value.trim(),
-      klass: $("klass").value.trim(),
-      mcqN: $("mcqN").value.trim() === "" ? null : parseInt($("mcqN").value,10),
-      blankN: $("blankN").value.trim() === "" ? null : parseInt($("blankN").value,10),
-      matchN: $("matchN").value.trim() === "" ? null : parseInt($("matchN").value,10),
-      structN: $("structN").value.trim() === "" ? null : parseInt($("structN").value,10),
-      totalMarks: parseInt($("totalMarks").value||"100",10),
-      duration: $("duration").value.trim(),
-      lang: $("langSel").value,
-      school: $("schoolName").value.trim(),
-      diagramCount: $("diagramToggle").checked ? (parseInt($("diagramCount").value||"0",10) || 0) : 0,
-      diagramTopics: $("diagramToggle").checked ? $("diagramTopics").value.trim() : "",
-      lessons,
-    };
-
-    try{
-      const r = await api("/api/generate-exam", { method:"POST", body: JSON.stringify(body) });
-      renderExam(r.exam, r.meta);
-      const c = (r.meta && r.meta.counts) || {};
-      const anyAuto = c.autoMcq || c.autoBlank || c.autoMatch || c.autoStruct;
-      const auto = anyAuto ? ` (A: ${c.mcq||0} MCQ + ${c.blank||0} meel banaan + ${c.match||0} isku-aad | B: ${c.struct||0} qaab-dhismeed — tirada otomaatig ayaa loo doortay)` : "";
-      statusMsg.textContent = "✅ Imtixaanka waa la diyaariyay oo la keydiyay." + auto;
-      loadSavedExams();
-    } catch(e){
-      showErr(e.message || "Khalad ayaa dhacay.");
-      statusMsg.textContent = "";
-    } finally {
-      genBtn.disabled = false;
-    }
-  }
-
-  // Imtixaannada hore loo keydiyay (ka hor luqad-doorashada) waxay isticmaalaan Soomaali.
-  const SO_LABELS = {
-    defSchool:"Imtixaanka Maadada", titleTemplate:"Imtixaanka {subject} — {class}",
-    totalMarks:"Wadarta Dhibcaha", time:"Waqtiga", studentName:"Magaca Ardayga", klass:"Fasalka", date:"Taariikhda",
-    source:"Isha", marksWord:"dhibcood", answerKey:"🔑 Furaha Jawaabaha (macalinka kaliya)", bloom:{}
   };
-  function renderExam(data, meta){
-    meta = meta || {};
-    const Lb = Object.assign({}, SO_LABELS, meta.labels || {});
-    const rtl = meta.lang === "ar";
-    const sections = (data && data.sections) || [];
-    const answerKey = (data && data.answerKey) || [];
-    const title = Lb.titleTemplate.replace("{subject}", meta.subject||"").replace("{class}", meta.klass||"");
-    let html = `<div class="ex-head">
-      ${meta.school ? `<h2>${esc(meta.school)}</h2>` : `<h2>${esc(Lb.defSchool)}</h2>`}
-      <div class="meta">${esc(title)}</div>
-      <div class="meta">${esc(Lb.totalMarks)}: ${esc(meta.totalMarks)} &nbsp;|&nbsp; ${esc(Lb.time)}: ${esc(meta.duration)}</div>
-    </div>
-    <div class="ex-fields">
-      <span>${esc(Lb.studentName)}: ______________________</span>
-      <span>${esc(Lb.klass)}: ______</span>
-      <span>${esc(Lb.date)}: __________</span>
-    </div>`;
-    if (meta.sourcesLabel) html += `<div class="ex-sources">${esc(Lb.source)}: ${esc(meta.sourcesLabel)}</div>`;
-
-    sections.forEach(sec=>{
-      html += `<div class="ex-section-title">${esc(sec.name)} (${esc(sec.marks)} ${esc(Lb.marksWord)})</div>`;
-      if (sec.instructions) html += `<div class="ex-instr">${esc(sec.instructions)}</div>`;
-      let prevType = null;
-      (sec.questions||[]).forEach(q=>{
-        if (sec.subtitles && q.type && q.type !== prevType && sec.subtitles[q.type]){
-          const st = sec.subtitles[q.type];
-          html += `<div class="ex-sub">${esc(st.name)}</div>` + (st.instr ? `<div class="ex-sub-instr">${esc(st.instr)}</div>` : "");
-        }
-        prevType = q.type || null;
-        html += `<div class="q"><span class="marks">[${esc(q.marks)}]</span><b>${esc(q.number)}.</b> ${esc(q.text)}<span class="bloom-tag">${esc((Lb.bloom||{})[q.bloom] || q.bloom || "")}</span>`;
-        if (q.svg && /^\s*<svg[\s>]/i.test(q.svg)) html += `<div class="q-diagram">${sanitizeSvg(q.svg)}</div>`;
-        if (q.options && q.options.length) html += `<div class="opts">` + q.options.map(o=>`<div>${esc(o)}</div>`).join("") + `</div>`;
-        if (q.match && q.match.left && q.match.right){
-          const L2 = q.match.left, R2 = q.match.right, rows = Math.max(L2.length, R2.length);
-          html += `<table class="match-tbl"><thead><tr><th class="mn">#</th><th>${esc(q.match.colA||"A")}</th><th class="ma">${rtl?"الجواب":"Jawaab"}</th><th class="mn">&nbsp;</th><th>${esc(q.match.colB||"B")}</th></tr></thead><tbody>`;
-          for (let i=0;i<rows;i++){
-            html += `<tr><td class="mn">${L2[i]!==undefined ? (i+1) : ""}</td><td>${L2[i]!==undefined ? esc(L2[i]) : ""}</td><td class="ma">${L2[i]!==undefined ? "" : ""}</td><td class="mn">${R2[i]!==undefined ? String.fromCharCode(65+i) : ""}</td><td>${R2[i]!==undefined ? esc(R2[i]) : ""}</td></tr>`;
-          }
-          html += `</tbody></table>`;
-        }
-        html += `</div>`;
-      });
+  return (fn) =>
+    new Promise((resolve, reject) => {
+      q.push({ fn, resolve, reject });
+      next();
     });
+}
+const geminiGate = makeGate(Math.max(1, parseInt(process.env.GEMINI_CONCURRENCY || "3", 10)));
 
-    if (answerKey.length){
-      html += `<details class="answerkey no-print"><summary>${esc(Lb.answerKey)}</summary><ol>`;
-      answerKey.forEach(a=>{ html += `<li value="${esc(a.number)}">${esc(a.answer)}</li>`; });
-      html += `</ol></details>`;
+function retryDelayMs(data) {
+  try {
+    const d = ((data && data.error && data.error.details) || []).find((x) => x && x.retryDelay);
+    if (d) return Math.ceil(parseFloat(d.retryDelay) * 1000) + 1000;
+  } catch (_) {}
+  return null;
+}
+
+async function geminiRequest(c, { system, messages, maxTokens, json }) {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) {
+    const err = new Error("GEMINI_API_KEY lama dejin server-ka.");
+    err.code = "no_api_key";
+    throw err;
+  }
+  const contents = messages.map((m) => ({
+    role: m.role === "assistant" ? "model" : "user",
+    parts:
+      typeof m.content === "string"
+        ? [{ text: m.content }]
+        : m.content.map((b) =>
+            b.type === "image"
+              ? { inline_data: { mime_type: b.source.media_type, data: b.source.data } }
+              : { text: b.text }
+          ),
+  }));
+  const url = `${GEMINI_BASE}/models/${encodeURIComponent(c.model)}:generateContent`;
+  let thinkingCfg = true;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const gen = { maxOutputTokens: maxTokens || 4096 };
+    if (json) gen.responseMimeType = "application/json";
+    if (thinkingCfg) gen.thinkingConfig = { thinkingLevel: "minimal" }; // thinking tokens waa lacag, yaree
+    const body = { contents, generationConfig: gen };
+    if (system) body.systemInstruction = { parts: [{ text: system }] };
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-goog-api-key": key },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) return data;
+    const msg = (data && data.error && data.error.message) || `Gemini error ${res.status}`;
+    // Moodel qaar ma aqbalaan thinkingConfig — ka tag oo dib u tijaabi
+    if (res.status === 400 && thinkingCfg && /think/i.test(msg)) {
+      thinkingCfg = false;
+      continue;
+    }
+    // Xad (rate limit) ama server mashquul — sug oo dib u tijaabi
+    if ([429, 500, 503].includes(res.status) && attempt < 4) {
+      const wait = retryDelayMs(data) || 8000 * (attempt + 1);
+      if (wait <= 65000) {
+        console.warn(`[gemini] ${res.status} — dib u tijaabin ${Math.round(wait / 1000)}s kadib`);
+        await sleep(wait);
+        continue;
+      }
+    }
+    const err = new Error(
+      res.status === 429
+        ? "Gemini: xadka bilaashka ah ayaa dhammaaday (daqiiqad ama maalin). Sug wax yar ama dooro AI kale. " + msg
+        : msg
+    );
+    err.code = "upstream_error";
+    throw err;
+  }
+}
+
+async function callAI({ system, messages, maxTokens, label, json }) {
+  const c = AI_CHOICES[currentChoice];
+
+  if (c.provider === "gemini") {
+    const data = await geminiGate(() => geminiRequest(c, { system, messages, maxTokens, json }));
+    const cand = (data.candidates || [])[0] || {};
+    const text = ((cand.content && cand.content.parts) || [])
+      .filter((p) => p.text && !p.thought)
+      .map((p) => p.text)
+      .join("\n");
+    const um = data.usageMetadata || {};
+    const inT = um.promptTokenCount || 0;
+    const outT = (um.candidatesTokenCount || 0) + (um.thoughtsTokenCount || 0); // thinking waxaa lagu dallacaa soo-saar
+    const stop = cand.finishReason || (data.promptFeedback && data.promptFeedback.blockReason) || "unknown";
+    console.log(`[ai] ${c.model} stop=${stop} in=${inT} out=${outT}`);
+    await recordUsage(c, inT, outT, label);
+    return { text, stop };
+  }
+
+  // ----- Claude -----
+  if (!process.env.ANTHROPIC_API_KEY) {
+    const err = new Error("ANTHROPIC_API_KEY lama dejin server-ka.");
+    err.code = "no_api_key";
+    throw err;
+  }
+  const body = { model: c.model, max_tokens: maxTokens || 4096, messages };
+  if (system) body.system = system;
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": process.env.ANTHROPIC_API_KEY,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify(body),
+  });
+  const jsonRes = await res.json();
+  if (!res.ok) {
+    const err = new Error((jsonRes && jsonRes.error && jsonRes.error.message) || "Claude API error");
+    err.code = "upstream_error";
+    throw err;
+  }
+  const text = (jsonRes.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n");
+  const u = jsonRes.usage || {};
+  console.log(`[ai] ${c.model} stop=${jsonRes.stop_reason} in=${u.input_tokens} out=${u.output_tokens}`);
+  await recordUsage(c, u.input_tokens || 0, u.output_tokens || 0, label);
+  return { text, stop: jsonRes.stop_reason };
+}
+
+function extractJson(text) {
+  let t = String(text || "").trim();
+  t = t.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
+  const start = t.search(/[{[]/);
+  const end = Math.max(t.lastIndexOf("}"), t.lastIndexOf("]"));
+  if (start === -1 || end === -1) throw new Error("no JSON found in reply");
+  return JSON.parse(t.slice(start, end + 1));
+}
+
+// Waxay u dirtaa AI-ga la doortay qayb yar; haddii JSON-ku xumaado mar keliya ayay dib u tijaabisaa.
+async function askJson(prompt, maxTokens, label) {
+  let last = "";
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const r = await callAI({ messages: [{ role: "user", content: prompt }], maxTokens, label, json: true });
+    try {
+      return extractJson(r.text);
+    } catch (e) {
+      last = r.stop;
+      console.error(`[${label}] attempt ${attempt + 1} failed (stop=${r.stop}): ${e.message}`);
+    }
+  }
+  throw new Error(`Qayb ka mid ah imtixaanka (${label}) ma dhammaystirmin (${last}). Isku day mar kale.`);
+}
+
+function distribute(total, count) {
+  if (count <= 0) return [];
+  const base = Math.floor(total / count);
+  const extra = total - base * count;
+  return Array.from({ length: count }, (_, i) => base + (i >= count - extra ? 1 : 0));
+}
+
+// Dhibcaha oo dib loo qoondeeyo: wadarta su'aalaha oo dhan = total (sax, tiro dhan).
+// Unug kasta (MCQ, meel banaan, lammaane isku-aad) wuxuu helaa dhibcaha isle'eg; Qaybta B waa qaab-dhismeed.
+function rebalanceMarks({ qMcq, qBlank, qMatch, qStruct, total, partAShare }) {
+  const pairsOf = (q) => (q.match && q.match.left ? q.match.left.length : 1);
+  const singles = [...qMcq, ...qBlank];
+  const aQs = [...qMcq, ...qBlank, ...qMatch];
+  const unitsA = singles.length + qMatch.reduce((a, q) => a + pairsOf(q), 0);
+  let partA;
+  if (!aQs.length) partA = 0;
+  else if (!qStruct.length) partA = total;
+  else {
+    partA = Math.round(total * partAShare);
+    partA = Math.max(partA, unitsA);
+    partA = Math.min(partA, total - qStruct.length);
+    partA = Math.max(1, partA);
+  }
+  if (aQs.length) {
+    const base = Math.max(1, Math.floor(partA / unitsA));
+    qMcq.forEach((q) => (q.marks = base));
+    qBlank.forEach((q) => (q.marks = base));
+    qMatch.forEach((q) => (q.marks = base * pairsOf(q)));
+    let rem = partA - aQs.reduce((a, q) => a + q.marks, 0);
+    const pool = singles.length ? singles : qMatch;
+    for (let i = 0; rem > 0 && pool.length; i++, rem--) pool[(pool.length - 1 - (i % pool.length))].marks++;
+  }
+  if (qStruct.length) {
+    const sm = distribute(total - partA, qStruct.length);
+    qStruct.forEach((q, i) => (q.marks = sm[i]));
+  }
+}
+
+function splitCounts(n, per) {
+  const batches = Math.ceil(n / per);
+  return distribute(n, batches);
+}
+
+function splitText(text, n) {
+  if (n <= 1) return [text];
+  const paras = text.split(/\n\s*\n/);
+  const target = Math.ceil(text.length / n);
+  const out = [];
+  let cur = "";
+  for (const p of paras) {
+    if (cur.length >= target && out.length < n - 1) { out.push(cur); cur = ""; }
+    cur += (cur ? "\n\n" : "") + p;
+  }
+  if (cur) out.push(cur);
+  while (out.length < n) out.push(out[out.length - 1] || text);
+  return out;
+}
+
+const MAX_SOURCE_CHARS = 90000; // ~ xadka qoraalka la dirayo (si lacagta loo ilaaliyo)
+
+// ---------- Luqadda: la-socoshada luqadda casharka ----------
+const LANG_NAMES = { so: "Somali (Af-Soomaali)", en: "English", ar: "Arabic (العربية)" };
+
+const LABELS = {
+  so: {
+    aName: "QAYBTA A: Su'aalaha Gaagaaban",
+    aInstr: "Ka jawaab dhammaan qaybaha hoose. Su'aal kastaa waxay leedahay dhibcaha ka horreeya.",
+    mcqName: "1. Ikhtiyaar Sax ah",
+    mcqInstr: "Dooro jawaabta saxda ah ee su'aal kasta.",
+    blankName: "2. Buuxi Meelaha Banaan",
+    blankInstr: "Ku buuxi meesha banaan ereyga ama weedha saxda ah.",
+    matchName: "3. Isku Aad",
+    matchInstr: "Ku aad shayga Tiirka A ee la socda Tiirka B (ku qor xarafka saxda ah).",
+    matchPrompt: "Ku aad Tiirka A iyo Tiirka B:", colA: "Tiirka A", colB: "Tiirka B",
+    structName: "QAYBTA B: Su'aalo Qaab-dhismeed ah",
+    structInstr: "Ka jawaab dhammaan su'aalaha. Si buuxda u qor jawaabahaaga.",
+    defSubject: "Maadada", defClass: "Fasalka", defDuration: "2 saac", defSchool: "Imtixaanka Maadada",
+    titleTemplate: "Imtixaanka {subject} — {class}",
+    totalMarks: "Wadarta Dhibcaha", time: "Waqtiga", studentName: "Magaca Ardayga", klass: "Fasalka", date: "Taariikhda",
+    source: "Isha", marksWord: "dhibcood", answerKey: "🔑 Furaha Jawaabaha (macalinka kaliya)",
+    pageWord: "Bogga", unnamed: "Cashar aan magac lahayn", lessonWord: "Cashar",
+    bloom: { Remember: "Xusuusnaan", Understand: "Fahamka", Apply: "Dabaqid", Analyze: "Falanqayn", Evaluate: "Qiimeyn", Create: "Abuur" },
+  },
+  en: {
+    aName: "SECTION A: Objective Questions",
+    aInstr: "Answer all the parts below. The marks for each question are shown in brackets.",
+    mcqName: "1. Multiple Choice",
+    mcqInstr: "Choose the correct answer for each question.",
+    blankName: "2. Fill in the Blanks",
+    blankInstr: "Fill in each blank with the correct word or phrase.",
+    matchName: "3. Matching",
+    matchInstr: "Match each item in Column A with its pair in Column B (write the correct letter).",
+    matchPrompt: "Match Column A with Column B:", colA: "Column A", colB: "Column B",
+    structName: "SECTION B: Structured Questions",
+    structInstr: "Answer all questions. Write your answers in full.",
+    defSubject: "Subject", defClass: "Class", defDuration: "2 hours", defSchool: "Subject Examination",
+    titleTemplate: "{subject} Examination — {class}",
+    totalMarks: "Total Marks", time: "Time", studentName: "Student's Name", klass: "Class", date: "Date",
+    source: "Source", marksWord: "marks", answerKey: "🔑 Answer Key (teacher only)",
+    pageWord: "Page", unnamed: "Untitled lesson", lessonWord: "Lesson",
+    bloom: { Remember: "Remember", Understand: "Understand", Apply: "Apply", Analyze: "Analyze", Evaluate: "Evaluate", Create: "Create" },
+  },
+  ar: {
+    aName: "القسم أ: الأسئلة الموضوعية",
+    aInstr: "أجب عن جميع الأجزاء التالية. درجة كل سؤال مكتوبة بين قوسين.",
+    mcqName: "١. الاختيار من متعدد",
+    mcqInstr: "اختر الإجابة الصحيحة لكل سؤال.",
+    blankName: "٢. أكمل الفراغات",
+    blankInstr: "أكمل كل فراغ بالكلمة أو العبارة الصحيحة.",
+    matchName: "٣. المزاوجة",
+    matchInstr: "صِل كل عنصر في العمود (أ) بما يناسبه في العمود (ب) (اكتب الحرف الصحيح).",
+    matchPrompt: "صِل بين العمود (أ) والعمود (ب):", colA: "العمود (أ)", colB: "العمود (ب)",
+    structName: "القسم ب: الأسئلة المقالية",
+    structInstr: "أجب عن جميع الأسئلة. اكتب إجاباتك كاملة.",
+    defSubject: "المادة", defClass: "الصف", defDuration: "ساعتان", defSchool: "امتحان المادة",
+    titleTemplate: "امتحان {subject} — {class}",
+    totalMarks: "المجموع الكلي للدرجات", time: "الزمن", studentName: "اسم الطالب", klass: "الصف", date: "التاريخ",
+    source: "المصدر", marksWord: "درجة", answerKey: "🔑 مفتاح الإجابات (للمعلم فقط)",
+    pageWord: "صفحة", unnamed: "درس بدون عنوان", lessonWord: "درس",
+    bloom: { Remember: "التذكر", Understand: "الفهم", Apply: "التطبيق", Analyze: "التحليل", Evaluate: "التقييم", Create: "الإبداع" },
+  },
+};
+
+const STOP_EN = new Set("the and of is are that with for this which by as from be an it can has have was were or not its their these those when where what how because into also than then there each such".split(" "));
+const STOP_SO = new Set("waa oo iyo ee ka ku uu ay waxa waxaa waxay ah sida kala kuwa loo aad ugu jiray leh ayaa ayuu lagu markii haddii laakiin sidoo kale dhammaan kasta isku kuwaas halka maxay yihiin yahay oo ayaa soo sii lahaa karo ama sababtoo".split(" "));
+
+// Waxay u eegtaa qoraalka: Carabi (far), Soomaali, ama Ingiriisi.
+function detectLang(text) {
+  const sample = String(text || "").slice(0, 30000);
+  const letters = (sample.match(/[A-Za-z\u0600-\u06FF]/g) || []).length;
+  const arabic = (sample.match(/[\u0600-\u06FF]/g) || []).length;
+  if (letters && arabic / letters > 0.4) return "ar";
+  const words = sample.toLowerCase().match(/[a-z']+/g) || [];
+  let en = 0, so = 0;
+  for (const w of words) {
+    if (STOP_EN.has(w)) en++;
+    if (STOP_SO.has(w)) so++;
+  }
+  if (!en && !so) return "so";
+  return so > en ? "so" : "en";
+}
+
+// Qaybta A = 60% (MCQ + meelaha banaan + isku aad), Qaybta B = 40% (qaab-dhismeed).
+const PART_A_SHARE = 0.6;
+const MATCH_PAIRS = 5; // isku-aad kasta wuxuu leeyahay 5 lammaane
+
+// Tirada su'aalaha otomaatig: waxay ku salaysan tahay dherer qoraalka iyo wadarta dhibcaha.
+function autoCounts({ chars, total, given, need }) {
+  const N = Math.min(36, Math.max(8, Math.round(chars / 1800)));
+  const hasS = need.s || given.s > 0;
+  const partA = hasS ? Math.round(total * PART_A_SHARE) : total;
+  const partB = total - partA;
+  let m = need.m ? Math.max(2, Math.round(N * 0.4)) : given.m;
+  let f = need.f ? Math.max(2, Math.round(N * 0.2)) : given.f;
+  let x = need.x ? 1 : given.x;
+  let s = need.s ? Math.max(2, N - m - f) : given.s;
+  // Qaybta A waa inay ku filnaato dhibcaheeda (dhibic 1 ugu yaraan su'aal kasta / lammaane kasta)
+  const units = () => m + f + x * MATCH_PAIRS;
+  while (units() > partA) {
+    if (need.m && m > 1) m--;
+    else if (need.f && f > 1) f--;
+    else if (need.x && x > 0) x--;
+    else break;
+  }
+  if (need.s) {
+    s = Math.max(s, Math.ceil(Math.max(0, partB) / 15)); // qaab-dhismeed kasta ≤ ~15 dhibcood
+    s = Math.min(30, s);
+  }
+  return { m: Math.min(60, m), f: Math.min(40, f), x: Math.min(6, x), s: Math.min(30, s) };
+}
+
+function batchPrompt({ kind, n, marksList, textSlice, subject, klass, diagrams, diagramTopics, part, parts, langName, forced }) {
+  const bloom = {
+    mcq: "Remember, Understand, Apply (lower and middle levels)",
+    blank: "Remember, Understand (lower levels)",
+    match: "Remember, Understand (lower levels)",
+    struct: "Apply, Analyze, Evaluate, Create (higher levels); mix short and long questions",
+  }[kind];
+  const diag = diagrams > 0
+    ? `EXACTLY ${diagrams} question(s) must include an "svg" diagram (simple, clear SVG: <svg viewBox="0 0 300 200" xmlns="http://www.w3.org/2000/svg">...</svg>, lines and short labels written in ${langName}; national-exam style: graph, diagram, geometry, circuit, etc.). All other questions have "svg": null.${diagramTopics ? " Preferred diagram topics: " + diagramTopics + "." : ""}`
+    : `All "svg" values must be null.`;
+  const langRule = forced
+    ? `LANGUAGE (critical): Write EVERYTHING (question text, options, answers, diagram labels) in ${langName}, even if the lesson text is in another language.`
+    : `LANGUAGE (critical): The lesson text below is written in ${langName}. Write EVERYTHING (question text, options, answers, diagram labels) in ${langName}, exactly the language of the lesson. Do NOT translate into any other language. Keep technical terms as they appear in the lesson.`;
+  const kindDesc = {
+    mcq: "multiple-choice questions (4 options A-D, exactly one correct answer, plausible distractors)",
+    blank: `fill-in-the-blank questions: each is ONE complete sentence taken from the lesson in which exactly ONE key term, number or short phrase (1-3 words) is replaced by "__________" (ten underscores). The blank must have a single clear correct answer; do not blank out trivial words`,
+    match: `matching questions: each question is a set of EXACTLY ${MATCH_PAIRS} pairs (term ↔ its definition / function / example / meaning) taken from the lesson. Keep every item short (max ~12 words), every left item must match exactly one right item, and no two pairs may be confusable`,
+    struct: "structured questions",
+  }[kind];
+  const shape = {
+    mcq: `{"questions":[{"text":"...","options":["A) ...","B) ...","C) ...","D) ..."],"answer":"B) ...","bloom":"Remember","svg":null}]}`,
+    blank: `{"questions":[{"text":"The __________ is responsible for ...","answer":"the missing word(s)","bloom":"Remember","svg":null}]}`,
+    match: `{"questions":[{"pairs":[{"left":"term 1","right":"its match 1"},{"left":"term 2","right":"its match 2"},{"left":"term 3","right":"its match 3"},{"left":"term 4","right":"its match 4"},{"left":"term 5","right":"its match 5"}],"bloom":"Remember","svg":null}]}`,
+    struct: `{"questions":[{"text":"... (add parts a), b), c) when appropriate)","answer":"Short model answer + marking points","bloom":"Analyze","svg":null}]}`,
+  }[kind];
+  const unit = kind === "match" ? "matching sets" : "questions";
+  const marksLine = kind === "struct" ? `\nMarks per question (in order): ${marksList.join(", ")}. Questions with more marks must be longer / more demanding.` : "";
+  return `You are an expert exam writer for national-standard school exams in Somalia (Ministry of Education / National exam style). Write ${n} ${kindDesc} about ${subject} (${klass}).
+Bloom's levels: ${bloom}.${marksLine}
+${langRule}
+Every question must be based ONLY on the lesson text below and must not repeat each other. The text is part ${part}/${parts} of the lessons; make the questions cover this part well.
+${diag}
+
+LESSON TEXT:
+"""
+${textSlice}
+"""
+
+Return ONLY JSON (no commentary, no code fences). The number of ${unit} must be ${n}. The "bloom" field must always be one of these English keys: Remember, Understand, Apply, Analyze, Evaluate, Create (it is translated later). Format:
+${shape}`;
+}
+
+function shuffled(arr) {
+  const a = arr.slice();
+  for (let tries = 0; tries < 10; tries++) {
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    if (a.some((v, i) => v !== arr[i])) break;
+  }
+  return a;
+}
+
+// ---------- Generate an exam from pasted/extracted lesson text ----------
+app.post("/api/generate-exam", requireAdmin, async (req, res) => {
+  try {
+    const {
+      subject = "",
+      klass = "",
+      mcqN = null,
+      blankN = null,
+      matchN = null,
+      structN = null,
+      totalMarks = 100,
+      duration = "",
+      school = "",
+      diagramCount = 0,
+      diagramTopics = "",
+      lang = "auto",
+      lessons = [],
+    } = req.body || {};
+
+    const isBlank = (v) => v === null || v === undefined || String(v).trim() === "" || isNaN(parseInt(v, 10));
+    const need = { m: isBlank(mcqN), f: isBlank(blankN), x: isBlank(matchN), s: isBlank(structN) };
+    const given = {
+      m: need.m ? 0 : Math.max(0, Math.min(60, parseInt(mcqN, 10))),
+      f: need.f ? 0 : Math.max(0, Math.min(40, parseInt(blankN, 10))),
+      x: need.x ? 0 : Math.max(0, Math.min(6, parseInt(matchN, 10))),
+      s: need.s ? 0 : Math.max(0, Math.min(30, parseInt(structN, 10))),
+    };
+    const total = Math.max(1, parseInt(totalMarks, 10) || 100);
+    if (!need.m && !need.f && !need.x && !need.s && given.m + given.f + given.x + given.s === 0) return res.status(400).json({ error: "questions required" });
+    const dCount = Math.max(0, Math.min(10, parseInt(diagramCount, 10) || 0));
+    const dTopics = String(diagramTopics || "").trim();
+
+    const cleanLessons = (Array.isArray(lessons) ? lessons : []).filter((l) => l && l.text && l.text.trim());
+    if (!cleanLessons.length) return res.status(400).json({ error: "lessons required" });
+
+    // Luqadda imtixaanka: haddii la doorto waa la raacayaa, haddii kale waxay raacaysaa luqadda casharka.
+    const forced = LANG_NAMES[lang] ? lang : null;
+    const rawText = cleanLessons.map((l) => l.text).join("\n\n");
+    const examLang = forced || detectLang(rawText);
+    const L = LABELS[examLang];
+    const langName = LANG_NAMES[examLang];
+
+    const subjectF = String(subject).trim() || L.defSubject;
+    const klassF = String(klass).trim() || L.defClass;
+    const durationF = String(duration).trim() || L.defDuration;
+
+    const sourcesLabel = cleanLessons
+      .map((l) => [l.chapter, l.pages ? L.pageWord + " " + l.pages : ""].filter(Boolean).join(" — ") || L.unnamed)
+      .join(" | ");
+
+    let allText = cleanLessons
+      .map((l, i) => {
+        const tag = [l.chapter || L.lessonWord + " " + (i + 1), l.pages ? L.pageWord + " " + l.pages : ""].filter(Boolean).join(" — ");
+        return `### ${tag}\n${l.text.trim()}`;
+      })
+      .join("\n\n");
+    if (allText.length > MAX_SOURCE_CHARS) allText = allText.slice(0, MAX_SOURCE_CHARS);
+
+    // Tirada su'aalaha: haddii aan la qorin, si otomaatig ah ayaa loo doortaa.
+    const { m: mN, f: fN, x: xN, s: sN } = autoCounts({ chars: allText.length, total, given, need });
+    if (mN + fN + xN + sN === 0) return res.status(400).json({ error: "questions required" });
+
+    // Dhibcaha: Qaybta A (MCQ + meelaha banaan + isku aad) = 60%, Qaybta B (qaab-dhismeed) = 40%.
+    // Su'aal kastaa waa inay ugu yaraan 1 dhibic hesho (lammaane kastaa 1 dhibic).
+    const unitsA = mN + fN + xN * MATCH_PAIRS;
+    let partA = 0;
+    if (unitsA === 0) partA = 0;
+    else if (sN === 0) partA = total;
+    else {
+      partA = Math.round(total * PART_A_SHARE);
+      partA = Math.max(partA, unitsA);       // Qaybta A >= tirada unugyadeeda
+      partA = Math.min(partA, total - sN);   // Qaybta B: su'aal kasta >= 1
+      partA = Math.max(1, partA);
+    }
+    const structTotal = total - partA;
+
+    // U qaybi dhibcaha Qaybta A noocyada: MCQ (1/unug), banaan (1/unug), isku-aad (5 unug/set)
+    const kinds = [["mcq", mN, 1], ["blank", fN, 1], ["match", xN, MATCH_PAIRS]].filter((k) => k[1] > 0);
+    const kindTotals = {};
+    let left = partA;
+    kinds.forEach((k, i) => {
+      if (i === kinds.length - 1) { kindTotals[k[0]] = left; return; }
+      const t = Math.min(left, Math.max(k[1] * k[2], Math.round((partA * k[1] * k[2]) / unitsA)));
+      kindTotals[k[0]] = t;
+      left -= t;
+    });
+    const mcqMarks = distribute(kindTotals.mcq || 0, mN);
+    const blankMarks = distribute(kindTotals.blank || 0, fN);
+    const matchMarks = distribute(kindTotals.match || 0, xN);
+    const structMarks = distribute(structTotal, sN);
+
+    const mcqCounts = splitCounts(mN, 10);
+    const blankCounts = splitCounts(fN, 10);
+    const matchCounts = splitCounts(xN, 3);
+    const structCounts = splitCounts(sN, 4);
+
+    // Sawirrada ku qaybi qaybaha qaab-dhismeedka (haddii aysan jirin, MCQ)
+    const diagTargets = structCounts.length ? structCounts : mcqCounts;
+    const diagAlloc = diagTargets.map(() => 0);
+    for (let i = 0; i < dCount && diagTargets.length; i++) diagAlloc[i % diagTargets.length]++;
+
+    const jobs = [];
+    const addJobs = (kind, counts, marksArr, tokens, label, diagFn) => {
+      let offset = 0;
+      const slices = splitText(allText, counts.length);
+      counts.forEach((n, i) => {
+        const d = diagFn ? diagFn(i) : 0;
+        const ml = marksArr.slice(offset, offset + n);
+        jobs.push({ kind, marks: ml, p: batchPrompt({ kind, n, marksList: ml, textSlice: slices[i], subject: subjectF, klass: klassF, diagrams: d, diagramTopics: dTopics, part: i + 1, parts: counts.length, langName, forced: !!forced }), max: d ? tokens + 2000 : tokens, label: label + " " + (i + 1) });
+        offset += n;
+      });
+    };
+    addJobs("mcq", mcqCounts, mcqMarks, 4000, "MCQ", (i) => (structCounts.length ? 0 : diagAlloc[i]));
+    addJobs("blank", blankCounts, blankMarks, 3000, "Blank");
+    addJobs("match", matchCounts, matchMarks, 3000, "Match");
+    addJobs("struct", structCounts, structMarks, 5000, "Struct", (i) => diagAlloc[i]);
+
+    const results = await Promise.all(jobs.map((j) => askJson(j.p, j.max, j.label)));
+
+    // Soo ururi su'aalaha nooc kasta (oo dhibcahooda leh)
+    const collect = (kind) => {
+      const qs = [];
+      results.forEach((r, i) => {
+        if (jobs[i].kind !== kind) return;
+        (r.questions || []).slice(0, jobs[i].marks.length).forEach((q, k) => {
+          const marks = jobs[i].marks[k];
+          if (kind === "match") {
+            const pairs = (Array.isArray(q.pairs) ? q.pairs : []).filter((p) => p && p.left && p.right).slice(0, 8);
+            if (pairs.length < 2) return;
+            const rightShuffled = shuffled(pairs.map((p) => String(p.right)));
+            const letters = "ABCDEFGHIJ";
+            const ans = pairs.map((p, idx) => `${idx + 1}-${letters[rightShuffled.indexOf(String(p.right))]}`).join(", ");
+            qs.push({
+              type: "match", marks, bloom: q.bloom || "", svg: null, answer: ans,
+              text: L.matchPrompt,
+              match: { left: pairs.map((p) => String(p.left)), right: rightShuffled, colA: L.colA, colB: L.colB },
+            });
+          } else {
+            qs.push({ ...q, type: kind, marks });
+          }
+        });
+      });
+      return qs;
+    };
+    const qMcq = collect("mcq");
+    const qBlank = collect("blank");
+    const qMatch = collect("match");
+    const qStruct = collect("struct");
+
+    const secA = {
+      name: L.aName, instructions: L.aInstr,
+      subtitles: {
+        mcq: { name: L.mcqName, instr: L.mcqInstr },
+        blank: { name: L.blankName, instr: L.blankInstr },
+        match: { name: L.matchName, instr: L.matchInstr },
+      },
+      qs: [...qMcq, ...qBlank, ...qMatch],
+    };
+    const secB = { name: L.structName, instructions: L.structInstr, qs: qStruct };
+
+    let n = 1;
+    const answerKey = [];
+    // Dib u xisaabi dhibcaha iyadoo la eegayo su'aalaha runta ah ee la abuuray,
+    // si wadarta had iyo jeer ay u noqoto dhibcaha la doortay (tusaale 100).
+    rebalanceMarks({ qMcq, qBlank, qMatch, qStruct, total, partAShare: PART_A_SHARE });
+
+    const sections = [secA, secB]
+      .filter((sec) => sec.qs.length)
+      .map((sec) => ({
+        name: sec.name,
+        instructions: sec.instructions,
+        subtitles: sec.subtitles || null,
+        marks: sec.qs.reduce((a, q) => a + q.marks, 0),
+        questions: sec.qs.map((q) => {
+          const number = n++;
+          answerKey.push({ number, answer: q.answer || "" });
+          return { number, type: q.type, text: q.text, marks: q.marks, bloom: q.bloom || "", options: q.options || null, match: q.match || null, svg: q.svg || null };
+        }),
+      }));
+    const data = { sections, answerKey };
+    const counts = { mcq: qMcq.length, blank: qBlank.length, match: qMatch.length, struct: qStruct.length, autoMcq: need.m, autoBlank: need.f, autoMatch: need.x, autoStruct: need.s };
+    const meta = { subject: subjectF, klass: klassF, totalMarks: total, duration: durationF, school, sourcesLabel, lang: examLang, labels: L, counts };
+
+    const id = crypto.randomUUID();
+    await pool.query(
+      `INSERT INTO exams (id, subject, class_name, total_marks, duration, sources, data) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [id, subjectF, klassF, total, durationF, sourcesLabel, JSON.stringify({ ...data, meta })]
+    );
+
+    res.json({ id, exam: data, meta });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message || "server error" });
+  }
+});
+
+// ---------- OCR cache (page kasta mar keliya ayaa la akhriyaa) ----------
+// Soo hel boggagga hore loo akhriyay buug (docHash = SHA-256 ee faylka).
+app.post("/api/ocr-cache", requireAdmin, async (req, res) => {
+  try {
+    const { docHash = "", pages = [] } = req.body || {};
+    const nums = (Array.isArray(pages) ? pages : []).map((n) => parseInt(n, 10)).filter((n) => n >= 1);
+    if (!docHash || !nums.length) return res.json({ pages: {} });
+    const { rows } = await pool.query(
+      "SELECT page, text FROM ocr_pages WHERE doc_hash=$1 AND page = ANY($2::int[])",
+      [String(docHash), nums]
+    );
+    const out = {};
+    rows.forEach((r) => { out[r.page] = r.text; });
+    res.json({ pages: out });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message || "server error" });
+  }
+});
+
+async function ocrOnePage(b64, mediaType) {
+  const content = [
+    {
+      type: "text",
+      text:
+        "Transcribe the text on this textbook page image EXACTLY as written. " +
+        "Keep the original language (Somali, English or Arabic) — do NOT translate, summarise or add commentary. " +
+        "Keep formulas, units, numbering and headings; write tables as plain text rows. " +
+        "For a picture/diagram, write only a short bracketed note like [Diagram: ...] in the page's own language. " +
+        "Output the transcription only. If the page has no text, output nothing.",
+    },
+    { type: "image", source: { type: "base64", media_type: mediaType, data: b64 } },
+  ];
+  const r = await callAI({ messages: [{ role: "user", content }], maxTokens: 4096, label: "ocr" });
+  return (r.text || "").trim();
+}
+
+// OCR boggag scan ah. Boggagga hore loo akhriyay waa laga qaadayaa keydka, kuwa cusub oo keliya ayaa la akhriyaa.
+app.post("/api/ocr-pages", requireAdmin, async (req, res) => {
+  try {
+    const { docHash = "", docName = "", pages = [], mediaType = "image/png" } = req.body || {};
+    if (!Array.isArray(pages) || !pages.length) return res.status(400).json({ error: "pages required" });
+    if (pages.length > 8) return res.status(400).json({ error: "too many pages in one call (max 8)" });
+    const items = pages
+      .map((p) => ({ num: parseInt(p && p.num, 10), image: p && p.image }))
+      .filter((p) => p.num >= 1);
+    if (!items.length) return res.status(400).json({ error: "pages required" });
+
+    const out = {};
+    const fromCache = [];
+    const fresh = [];
+
+    let cached = {};
+    if (docHash) {
+      const { rows } = await pool.query(
+        "SELECT page, text FROM ocr_pages WHERE doc_hash=$1 AND page = ANY($2::int[])",
+        [String(docHash), items.map((p) => p.num)]
+      );
+      rows.forEach((r) => { cached[r.page] = r.text; });
     }
 
-    examOutput.innerHTML = html;
-    examOutput.dir = rtl ? "rtl" : "ltr";
-    examOutput.classList.remove("hidden");
-    resultActions.classList.remove("hidden");
-  }
+    const todo = [];
+    for (const p of items) {
+      if (cached[p.num] !== undefined) { out[p.num] = cached[p.num]; fromCache.push(p.num); }
+      else if (p.image) todo.push(p);
+    }
 
-  genBtn.addEventListener("click", generate);
-  function syncDiagramOpts(){ $("diagramOpts").style.display = $("diagramToggle").checked ? "grid" : "none"; }
-  $("diagramToggle").addEventListener("change", syncDiagramOpts);
-  syncDiagramOpts();
-  $("printBtn").addEventListener("click", ()=>window.print());
-  $("newBtn").addEventListener("click", ()=>{
-    examOutput.classList.add("hidden");
-    resultActions.classList.add("hidden");
-    statusMsg.textContent = "";
-    formCard.scrollIntoView({behavior:"smooth"});
+    await Promise.all(
+      todo.map(async (p) => {
+        const text = await ocrOnePage(p.image, mediaType);
+        out[p.num] = text;
+        fresh.push(p.num);
+        // Keydi kaliya haddii qoraal la helay (bog madhan dib ayaa loo isku dayi karaa)
+        if (docHash && text) {
+          await pool.query(
+            `INSERT INTO ocr_pages (doc_hash, page, doc_name, text) VALUES ($1,$2,$3,$4)
+             ON CONFLICT (doc_hash, page) DO UPDATE SET text=EXCLUDED.text, doc_name=EXCLUDED.doc_name, created_at=now()`,
+            [String(docHash), p.num, String(docName).slice(0, 200), text]
+          );
+        }
+      })
+    );
+
+    res.json({ pages: out, fromCache, fresh });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message || "server error" });
+  }
+});
+
+// ---------- Saved exams ----------
+app.get("/api/exams", requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      "SELECT id, subject, class_name, total_marks, duration, sources, created_at FROM exams ORDER BY created_at DESC LIMIT 100"
+    );
+    res.json(rows);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "server error" });
+  }
+});
+
+app.get("/api/exams/:id", requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query("SELECT * FROM exams WHERE id=$1", [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: "not found" });
+    res.json(rows[0]);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "server error" });
+  }
+});
+
+app.delete("/api/exams/:id", requireAdmin, async (req, res) => {
+  try {
+    await pool.query("DELETE FROM exams WHERE id=$1", [req.params.id]);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "server error" });
+  }
+});
+
+// ---------- Lesson Plan + Lesson Note ----------
+pool.query(`CREATE TABLE IF NOT EXISTS lesson_plans (
+  id TEXT PRIMARY KEY, teacher TEXT DEFAULT '', subject TEXT DEFAULT '', class_name TEXT DEFAULT '',
+  title TEXT DEFAULT '', data JSONB NOT NULL DEFAULT '{}', created_at TIMESTAMPTZ DEFAULT now())`
+).catch((e) => console.error("LP DB init error:", e));
+
+app.post("/api/generate-lesson-plan", requireAdmin, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const f = (k) => String(b[k] || "").trim();
+    const meta = { teacher: f("teacher"), klass: f("klass"), subject: f("subject"), unit: f("unit"), lesson: f("lesson"),
+      date: f("date"), day: f("day"), session: f("session"), weekly: f("weekly"), duration: f("duration") || "40 min" };
+    if (!meta.unit && !meta.lesson) return res.status(400).json({ error: "Fadlan geli cutubka ama cinwaanka casharka." });
+    const src = f("text").slice(0, 30000);
+    const nGiven = parseInt(b.numObjectives, 10);
+    const nObj = nGiven >= 1 ? Math.min(12, nGiven) : 0; // 0 = otomaatig: raac objectives-ka buugga/manhajka
+    const lang = LANG_NAMES[b.lang] ? b.lang : src ? detectLang(src) : "en";
+    meta.lang = lang;
+    const prompt = `You are an experienced teacher in a Somali secondary school writing a STANDARD lesson plan and its matching LESSON NOTE.
+Subject: ${meta.subject || "-"}; Class: ${meta.klass || "-"}; Unit/Chapter: ${meta.unit || "-"}; Lesson title: ${meta.lesson || "-"}; Duration: ${meta.duration}.
+Write everything in ${LANG_NAMES[lang]}.${src ? " Base the content ONLY on the lesson text below." : ""}
+Rules:
+- "objectives": ${nObj
+  ? `exactly ${nObj} measurable objectives chosen by the teacher.`
+  : `AUTOMATIC COUNT. ${src ? "First look in the lesson text for the objectives that the textbook/curriculum itself states for this unit/lesson (e.g. 'Objectives', 'By the end of this unit/lesson you should be able to', 'Learning outcomes'). If found, copy ALL of them, in the same order and the same meaning, without dropping or merging any. If the text states none, " : ""}Use the objectives of the Somali national curriculum for this unit/lesson; if you do not know them, write as many as the lesson genuinely needs (usually 3-8). Do not add filler objectives and do not cut real ones.`} Each starts with an action verb (define, explain, list, apply, compare...) completing "the learner should be able to ...". Do not repeat the lead-in phrase.
+- "introduction": 2-3 sentences linking the unit "${meta.unit}" to the lesson "${meta.lesson}".
+- "methods": 3-4 suitable teaching methods, comma separated. "aids": learning aids, comma separated.
+- "evaluation": NOT a fixed number. Write as many short questions/tasks as this lesson needs (normally at least one per objective, usually 4-12), covering ALL objectives in order, no padding.
+- "note": the LESSON NOTE = a complete summary built from the objectives, the unit and the lesson title. It MUST contain EVERY objective: one section per objective, in the same order and with no objective left out or merged (heading "h" = the key idea of that objective, "p" = 3-6 short lines separated by \\n, with definitions/explanations/examples/formulas that fully let the learner achieve that objective), then a final section with heading "Summary". Use the same terms as the plan; it must be consistent with it and answer the evaluation items. Length follows the number of objectives (about 80-120 words per objective).
+${src ? `\nLESSON TEXT:\n"""\n${src}\n"""\n` : ""}
+Return ONLY JSON (no code fences): {"introduction":"","objectives":[""],"methods":"","aids":"","evaluation":[""],"note":[{"h":"","p":""}]}`;
+    const plan = await askJson(prompt, 9000, "lesson-plan");
+    plan.objectives = (plan.objectives || []).slice(0, 15);
+    plan.evaluation = (plan.evaluation || []).slice(0, 20);
+    const id = crypto.randomUUID();
+    await pool.query(
+      `INSERT INTO lesson_plans (id, teacher, subject, class_name, title, data) VALUES ($1,$2,$3,$4,$5,$6)`,
+      [id, meta.teacher, meta.subject, meta.klass, [meta.unit, meta.lesson].filter(Boolean).join(" — "), JSON.stringify({ meta, plan })]
+    );
+    res.json({ id, meta, plan });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message || "server error" });
+  }
+});
+
+app.get("/api/lesson-plans", requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query("SELECT id, teacher, subject, class_name, title, created_at FROM lesson_plans ORDER BY created_at DESC LIMIT 100");
+    res.json(rows);
+  } catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+});
+app.get("/api/lesson-plans/:id", requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query("SELECT data FROM lesson_plans WHERE id=$1", [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: "not found" });
+    res.json(rows[0].data);
+  } catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+});
+app.delete("/api/lesson-plans/:id", requireAdmin, async (req, res) => {
+  try { await pool.query("DELETE FROM lesson_plans WHERE id=$1", [req.params.id]); res.json({ ok: true }); }
+  catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+});
+
+// ---------- Maktabadda Manhajka (buug kasta = fasal + maadada; OCR-kiisa waa la keydiyaa) ----------
+pool.query(`CREATE TABLE IF NOT EXISTS library_books (
+  id TEXT PRIMARY KEY,
+  class_name TEXT NOT NULL DEFAULT '',
+  subject TEXT NOT NULL DEFAULT '',
+  title TEXT NOT NULL DEFAULT '',
+  doc_hash TEXT NOT NULL UNIQUE,
+  num_pages INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT now())`
+).catch((e) => console.error("Library DB init error:", e));
+
+function parseRangeServer(str, max) {
+  const out = new Set();
+  String(str || "").split(",").forEach((part) => {
+    part = part.trim();
+    if (!part) return;
+    const m = part.match(/^(\d+)\s*-\s*(\d+)$/);
+    if (m) {
+      let a = parseInt(m[1], 10), b = parseInt(m[2], 10);
+      if (a > b) [a, b] = [b, a];
+      for (let i = a; i <= b && i <= max; i++) if (i >= 1) out.add(i);
+    } else {
+      const n = parseInt(part, 10);
+      if (n >= 1 && n <= max) out.add(n);
+    }
   });
+  return Array.from(out).sort((a, b) => a - b);
+}
 
+async function getBook(id) {
+  const { rows } = await pool.query("SELECT * FROM library_books WHERE id=$1", [id]);
+  return rows[0] || null;
+}
 
-  // ---------- Lesson Plan + Lesson Note ----------
-  function showTab(name){
-    $("examTab").classList.toggle("hidden", name!=="exam");
-    $("lpTab").classList.toggle("hidden", name!=="lp");
-    $("libTab").classList.toggle("hidden", name!=="lib");
-    $("tabExam").classList.toggle("on", name==="exam");
-    $("tabLp").classList.toggle("on", name==="lp");
-    $("tabLib").classList.toggle("on", name==="lib");
-    if (name==="lp") lpLoadList();
-    if (name==="lib") libLoad();
-  }
-  $("tabExam").addEventListener("click", ()=>showTab("exam"));
-  $("tabLp").addEventListener("click", ()=>showTab("lp"));
-  $("tabLib").addEventListener("click", ()=>showTab("lib"));
-  initPicker(document.querySelector('.lib-pick[data-pick="lp"]'), {
-    pages: ()=>document.querySelector('.lib-pick[data-pick="lp"] .lib-pages'),
-    text: ()=>$("lpText"), subject: ()=>$("lpSubject"), klass: ()=>$("lpClass")
-  });
+// Liiska buugaagta + intee bog ayaa OCR-keeda la keydiyay
+app.get("/api/library", requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT b.id, b.class_name, b.subject, b.title, b.doc_hash, b.num_pages, b.created_at,
+              (SELECT COUNT(*) FROM ocr_pages p WHERE p.doc_hash = b.doc_hash)::int AS pages_done
+         FROM library_books b ORDER BY b.class_name, b.subject, b.title`
+    );
+    res.json(rows);
+  } catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+});
 
-  function lpRender(d){
-    const m = d.meta||{}, p = d.plan||{};
-    const H = t=>`<div class="lp-h">${t}</div>`;
-    const box = (l,v)=>`<div class="lp-f">${H(l)}<div class="lp-v">${esc(v)||"&nbsp;"}</div></div>`;
-    const list = a=>(a||[]).map((x,i)=>`<div>${i+1}. ${esc(x)}</div>`).join("");
-    const note = (p.note||[]).map(s=>`<div class="lp-nh">${esc(s.h)}</div>` +
-      String(s.p||"").split("\n").filter(Boolean).map(x=>`<p>${esc(x)}</p>`).join("")).join("");
-    const img = `<img class="lp-img" src="/letterhead.jpg" alt="">`;
-    const rtl = m.lang === "ar" ? ' dir="rtl"' : "";
-    const tot = parseInt(String(m.duration||"").match(/\d+/), 10) || 40;
-    const w = [0.125, 0.075, 0.55, 0.25];
-    const mins = w.map(x=>Math.max(1, Math.round(tot*x)));
-    mins[2] += tot - mins.reduce((a,x)=>a+x,0);
-    const tm = ["Question of the last lesson","Attendance of students","Explanation","Evaluation of lesson and homework"].map((t,i)=>[t, mins[i]]);
-    lpOut.innerHTML = `<div class="lp-page">${img}<div class="lp-title">LESSON PLAN 2026-2027</div>
-      <div class="lp-grid">
-        <div class="lp-c"><b>TEACHER NAME:</b> ${esc(m.teacher)}</div>
-        <div class="lp-info">${[["Class",m.klass],["Subject",m.subject],["Date",m.date],["Day",m.day],["Unit",m.unit],["Lesson",m.lesson,"w"],["Time",m.duration],["Lesson/Session",m.session]]
-          .map(x=>`<div${x[2]?' class="w"':''}><div class="il">${x[0]}</div><div class="iv">${esc(x[1])||"&nbsp;"}</div></div>`).join("")}</div>
-        ${H("Introduction")}<div class="lp-v"${rtl}>${esc(p.introduction)}</div>
-        ${H("Lesson Objectives")}<div class="lp-v"${rtl}><b>Insha Allah, after the end of the lesson, the learner should be able to:</b>${list(p.objectives)}</div>
-        ${H("Teaching Methods")}<div class="lp-v"${rtl}>${esc(p.methods)}</div>
-        ${H("LEARNING AIDS")}<div class="lp-v"${rtl}>${esc(p.aids)}</div>
-        ${H("Evaluation")}<div class="lp-v lp-ev"${rtl}>${list(p.evaluation)}</div>
-      </div>
-      <div class="lp-tmw">${H("Time Management")}
-      <table class="lp-tt"><tr><th class="c">No.</th><th>Stage / Activity</th><th class="c">Time (min)</th></tr>
-      ${tm.map((r,i)=>`<tr><td class="c">${i+1}</td><td>${r[0]}</td><td class="c">${r[1]}</td></tr>`).join("")}
-      <tr><td></td><td><b>Total</b></td><td class="c"><b>${tm.reduce((a,r)=>a+r[1],0)}</b></td></tr>
-      <tr><td></td><td><b>Weekly</b></td><td class="c">${esc(m.weekly)||"&nbsp;"}</td></tr></table></div></div>
-      <div class="lp-page">${img}<div class="lp-title">LESSON NOTE</div>
-        <div class="lp-note"${rtl}><div class="lp-nh2">${esc([m.unit,m.lesson].filter(Boolean).join(" — "))}</div>${note}</div>
-        <div class="lp-sign"><div class="sl">Madaxa Xafiiska Waxbarashada:<span>&nbsp;</span></div><div class="st">Stamp</div></div></div>`;
-    lpOut.contentEditable = "true";
-    ["lpOut","lpActions","lpHint"].forEach(i=>$(i).classList.remove("hidden"));
-  }
-  const lpOut = $("lpOut");
+// Diiwaangeli buug (haddii isla faylka hore loo geliyay, xogtiisa waa la cusboonaysiiyaa)
+app.post("/api/library", requireAdmin, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const docHash = String(b.docHash || "").trim();
+    if (!docHash) return res.status(400).json({ error: "docHash required" });
+    const cls = String(b.className || "").trim().slice(0, 60);
+    const subj = String(b.subject || "").trim().slice(0, 100);
+    const title = String(b.title || "").trim().slice(0, 200);
+    const n = Math.max(0, parseInt(b.numPages, 10) || 0);
+    if (!cls || !subj) return res.status(400).json({ error: "Fasalka iyo maadada waa loo baahan yahay." });
+    const id = crypto.randomUUID();
+    const { rows } = await pool.query(
+      `INSERT INTO library_books (id, class_name, subject, title, doc_hash, num_pages)
+       VALUES ($1,$2,$3,$4,$5,$6)
+       ON CONFLICT (doc_hash) DO UPDATE SET class_name=EXCLUDED.class_name, subject=EXCLUDED.subject,
+         title=EXCLUDED.title, num_pages=EXCLUDED.num_pages
+       RETURNING id`,
+      [id, cls, subj, title || subj, docHash, n]
+    );
+    res.json({ id: rows[0].id });
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message || "server error" }); }
+});
 
-  async function lpLoadList(){
-    const el = $("lpSaved");
-    try{
-      const rows = await api("/api/lesson-plans");
-      if (!rows.length){ el.textContent = "Wali lesson plan lama keydin."; return; }
-      el.innerHTML = rows.map(r=>`<div class="saved-item"><div><b>${esc(r.subject||"-")}</b> — ${esc(r.class_name||"")}
-        <div class="meta">${esc(r.title||"")} · ${new Date(r.created_at).toLocaleDateString()}</div></div>
-        <div class="sv-btns"><button class="btn-ghost" data-lo="${r.id}">👁️ Fur</button>
-        <button class="btn-ghost" data-ld="${r.id}" style="color:var(--bad);">🗑️</button></div></div>`).join("");
-      el.querySelectorAll("[data-lo]").forEach(b=>b.addEventListener("click", async ()=>{
-        try{ lpRender(await api("/api/lesson-plans/"+b.dataset.lo)); lpOut.scrollIntoView({behavior:"smooth"}); }catch(e){ alert("Khalad: "+e.message); }
-      }));
-      el.querySelectorAll("[data-ld]").forEach(b=>b.addEventListener("click", async ()=>{
-        if (!confirm("Ma hubtaa inaad tirtirto?")) return;
-        await api("/api/lesson-plans/"+b.dataset.ld, {method:"DELETE"}); lpLoadList();
-      }));
-    } catch(e){ el.textContent = "⚠️ Khalad soo dejin ah."; }
-  }
+// Bogagga hore loo keydiyay (si OCR-ku uga sii socdo halka uu istaagay)
+app.get("/api/library/:id/done", requireAdmin, async (req, res) => {
+  try {
+    const book = await getBook(req.params.id);
+    if (!book) return res.status(404).json({ error: "not found" });
+    const { rows } = await pool.query("SELECT page FROM ocr_pages WHERE doc_hash=$1 ORDER BY page", [book.doc_hash]);
+    res.json({ pages: rows.map((r) => r.page) });
+  } catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+});
 
-  $("lpGen").addEventListener("click", async ()=>{
-    const v = id=>$(id).value.trim(), err = $("lpErr");
-    if (!v("lpUnit") && !v("lpLesson")){ err.textContent = "⚠️ Fadlan geli cutubka ama cinwaanka casharka."; err.classList.remove("hidden"); return; }
-    err.classList.add("hidden");
-    $("lpGen").disabled = true; $("lpStatus").textContent = "⏳ Waa la dejinayaa lesson plan-ka iyo note-ka... (20-40 ilbiriqsi)";
-    try{
-      const r = await api("/api/generate-lesson-plan", {method:"POST", body: JSON.stringify({
-        teacher:v("lpTeacher"), klass:v("lpClass"), subject:v("lpSubject"), unit:v("lpUnit"), lesson:v("lpLesson"),
-        date:v("lpDate"), day:v("lpDay"), session:v("lpSession"), weekly:v("lpWeekly"), duration:v("lpDur"),
-        numObjectives:v("lpNObj"), lang:$("lpLang").value, text:v("lpText") })});
-      lpRender(r); $("lpStatus").textContent = "✅ Waa la diyaariyay oo la keydiyay."; lpLoadList();
-      lpOut.scrollIntoView({behavior:"smooth"});
-    } catch(e){ err.textContent = "⚠️ " + (e.message||"Khalad"); err.classList.remove("hidden"); $("lpStatus").textContent = ""; }
-    finally { $("lpGen").disabled = false; }
-  });
-  $("lpPrint").addEventListener("click", ()=>window.print());
+// Keydi qoraalka bogagga PDF-ka ee qoraalkoodu horay ugu jiray (OCR looma baahna)
+app.post("/api/library/:id/store-pages", requireAdmin, async (req, res) => {
+  try {
+    const book = await getBook(req.params.id);
+    if (!book) return res.status(404).json({ error: "not found" });
+    const pages = (req.body && req.body.pages) || {};
+    const entries = Object.entries(pages)
+      .map(([k, v]) => [parseInt(k, 10), String(v || "").trim()])
+      .filter(([n, t]) => n >= 1 && t);
+    if (entries.length > 60) return res.status(400).json({ error: "too many pages in one call (max 60)" });
+    for (const [n, t] of entries) {
+      await pool.query(
+        `INSERT INTO ocr_pages (doc_hash, page, doc_name, text) VALUES ($1,$2,$3,$4)
+         ON CONFLICT (doc_hash, page) DO UPDATE SET text=EXCLUDED.text, doc_name=EXCLUDED.doc_name, created_at=now()`,
+        [book.doc_hash, n, book.title.slice(0, 200), t]
+      );
+    }
+    res.json({ stored: entries.length });
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message || "server error" }); }
+});
 
-  boot();
-})();
-</script>
-</body>
-</html>
+// Soo qaad qoraalka bogagga (tusaale ?pages=24-31). Haddii bogag aan la qorin, 90k xaraf ee ugu horreeya.
+app.get("/api/library/:id/text", requireAdmin, async (req, res) => {
+  try {
+    const book = await getBook(req.params.id);
+    if (!book) return res.status(404).json({ error: "not found" });
+    const max = book.num_pages || 5000;
+    const asked = String(req.query.pages || "").trim();
+    const nums = asked ? parseRangeServer(asked, max) : null;
+    const { rows } = nums
+      ? await pool.query("SELECT page, text FROM ocr_pages WHERE doc_hash=$1 AND page = ANY($2::int[]) ORDER BY page", [book.doc_hash, nums])
+      : await pool.query("SELECT page, text FROM ocr_pages WHERE doc_hash=$1 ORDER BY page", [book.doc_hash]);
+    let text = rows.map((r) => r.text).join("\n\n");
+    let truncated = false;
+    if (text.length > MAX_SOURCE_CHARS) { text = text.slice(0, MAX_SOURCE_CHARS); truncated = true; }
+    const have = new Set(rows.map((r) => r.page));
+    res.json({
+      text,
+      found: rows.length,
+      requested: nums ? nums.length : rows.length,
+      missing: nums ? nums.filter((n) => !have.has(n)) : [],
+      truncated,
+    });
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message || "server error" }); }
+});
+
+// Raadi cutub/cashar buugga gudihiisa (waxay soo celisaa lambarrada bogagga)
+app.get("/api/library/:id/search", requireAdmin, async (req, res) => {
+  try {
+    const book = await getBook(req.params.id);
+    if (!book) return res.status(404).json({ error: "not found" });
+    const q = String(req.query.q || "").trim().slice(0, 100);
+    if (q.length < 2) return res.json({ hits: [] });
+    const like = "%" + q.replace(/[\\%_]/g, (m) => "\\" + m) + "%";
+    const { rows } = await pool.query(
+      "SELECT page, text FROM ocr_pages WHERE doc_hash=$1 AND text ILIKE $2 ORDER BY page LIMIT 40",
+      [book.doc_hash, like]
+    );
+    const hits = rows.map((r) => {
+      const i = r.text.toLowerCase().indexOf(q.toLowerCase());
+      const s = Math.max(0, i - 40);
+      return { page: r.page, snippet: r.text.slice(s, s + 120).replace(/\s+/g, " ") };
+    });
+    res.json({ hits });
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message || "server error" }); }
+});
+
+app.delete("/api/library/:id", requireAdmin, async (req, res) => {
+  try {
+    const book = await getBook(req.params.id);
+    if (!book) return res.json({ ok: true });
+    await pool.query("DELETE FROM ocr_pages WHERE doc_hash=$1", [book.doc_hash]);
+    await pool.query("DELETE FROM library_books WHERE id=$1", [req.params.id]);
+    res.json({ ok: true });
+  } catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+});
+
+// ---------- Static ----------
+app.use(
+  express.static(path.join(__dirname, "public"), {
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith(".html")) res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    },
+  })
+);
+app.get("/", (req, res) => res.sendFile(path.join(__dirname, "public", "index.html")));
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`🚀 Server wuxuu ku shaqeynayaa port ${PORT}`));
