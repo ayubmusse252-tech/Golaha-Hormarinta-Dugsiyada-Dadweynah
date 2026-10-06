@@ -460,6 +460,21 @@ function splitText(text, n) {
 const MAX_SOURCE_CHARS = 90000; // ~ xadka qoraalka la dirayo (si lacagta loo ilaaliyo)
 
 // ---------- Luqadda: la-socoshada luqadda casharka ----------
+// Marka qoraal buug la'aan, luqadda ka qaado magaca maadada/cutubka/casharka (Carabi → ar, haddii kale so/en).
+function detectLangShort(text) {
+  const s = String(text || "");
+  if (/[\u0600-\u06FF]/.test(s)) return "ar";
+  const words = s.toLowerCase().match(/[a-z']+/g) || [];
+  let en = 0, so = 0;
+  for (const w of words) {
+    if (STOP_EN.has(w)) en++;
+    if (STOP_SO.has(w)) so++;
+  }
+  return so > en ? "so" : "en";
+}
+const SUMMARY_WORD = { so: "Soo koobid", en: "Summary", ar: "الخلاصة" };
+const DEFAULT_LESSON_DURATION = { so: "40 daqiiqo", en: "40 min", ar: "40 دقيقة" };
+
 const LANG_NAMES = { so: "Somali (Af-Soomaali)", en: "English", ar: "Arabic (العربية)" };
 
 const LABELS = {
@@ -971,17 +986,18 @@ pool.query(`CREATE TABLE IF NOT EXISTS lesson_plans (
 
 async function createLessonPlan(b, teacherId) {
     const f = (k) => String(b[k] || "").trim();
-    const meta = { teacher: f("teacher"), klass: f("klass"), subject: f("subject"), unit: f("unit"), lesson: f("lesson"),
-      date: f("date"), day: f("day"), session: f("session"), weekly: f("weekly"), duration: f("duration") || "40 min" };
-    if (!meta.unit && !meta.lesson) { const er = new Error("Fadlan geli cutubka ama cinwaanka casharka."); er.status = 400; throw er; }
     const src = f("text").slice(0, 30000);
+    // Luqadda: haddii la doorto waa la raacayaa; haddii kale waxay raacaysaa luqadda buugga/casharka (qoraalka), ama magaca maadada/cutubka.
+    const lang = LANG_NAMES[b.lang] ? b.lang : src ? detectLang(src) : detectLangShort([f("subject"), f("unit"), f("lesson")].join(" "));
+    const meta = { teacher: f("teacher"), klass: f("klass"), subject: f("subject"), unit: f("unit"), lesson: f("lesson"),
+      date: f("date"), day: f("day"), session: f("session"), weekly: f("weekly"), duration: f("duration") || DEFAULT_LESSON_DURATION[lang] };
+    if (!meta.unit && !meta.lesson) { const er = new Error("Fadlan geli cutubka ama cinwaanka casharka."); er.status = 400; throw er; }
     const nGiven = parseInt(b.numObjectives, 10);
     const nObj = nGiven >= 1 ? Math.min(12, nGiven) : 0; // 0 = otomaatig: raac objectives-ka buugga/manhajka
-    const lang = LANG_NAMES[b.lang] ? b.lang : src ? detectLang(src) : "en";
     meta.lang = lang;
     const prompt = `You are an experienced teacher in a Somali secondary school writing a STANDARD lesson plan and its matching LESSON NOTE.
 Subject: ${meta.subject || "-"}; Class: ${meta.klass || "-"}; Unit/Chapter: ${meta.unit || "-"}; Lesson title: ${meta.lesson || "-"}; Duration: ${meta.duration}.
-Write everything in ${LANG_NAMES[lang]}.${src ? " Base the content ONLY on the lesson text below." : ""}
+Write EVERYTHING in ${LANG_NAMES[lang]} (the language of the textbook): introduction, objectives, methods, aids, evaluation, and all note headings and paragraphs. Do not mix in words from another language.${src ? " Base the content ONLY on the lesson text below." : ""}
 Rules:
 - "objectives": ${nObj
   ? `exactly ${nObj} measurable objectives chosen by the teacher.`
@@ -989,7 +1005,7 @@ Rules:
 - "introduction": 2-3 sentences linking the unit "${meta.unit}" to the lesson "${meta.lesson}".
 - "methods": 3-4 suitable teaching methods, comma separated. "aids": learning aids, comma separated.
 - "evaluation": NOT a fixed number. Write as many short questions/tasks as this lesson needs (normally at least one per objective, usually 4-12), covering ALL objectives in order, no padding.
-- "note": the LESSON NOTE = a complete summary built from the objectives, the unit and the lesson title. It MUST contain EVERY objective: one section per objective, in the same order and with no objective left out or merged (heading "h" = the key idea of that objective, "p" = 3-6 short lines separated by \\n, with definitions/explanations/examples/formulas that fully let the learner achieve that objective), then a final section with heading "Summary". Use the same terms as the plan; it must be consistent with it and answer the evaluation items. Length follows the number of objectives (about 80-120 words per objective).
+- "note": the LESSON NOTE = a complete summary built from the objectives, the unit and the lesson title. It MUST contain EVERY objective: one section per objective, in the same order and with no objective left out or merged (heading "h" = the key idea of that objective, "p" = 3-6 short lines separated by \\n, with definitions/explanations/examples/formulas that fully let the learner achieve that objective), then a final section with heading "${SUMMARY_WORD[lang]}". Use the same terms as the plan; it must be consistent with it and answer the evaluation items. Length follows the number of objectives (about 80-120 words per objective).
 ${src ? `\nLESSON TEXT:\n"""\n${src}\n"""\n` : ""}
 Return ONLY JSON (no code fences): {"introduction":"","objectives":[""],"methods":"","aids":"","evaluation":[""],"note":[{"h":"","p":""}]}`;
     const plan = await askJson(prompt, 9000, "lesson-plan");
