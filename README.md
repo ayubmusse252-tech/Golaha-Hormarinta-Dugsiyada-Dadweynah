@@ -50,3 +50,13 @@ Tab cusub oo **👩‍🏫 Macallimiin** ah (maamulka oo keliya):
 npm install
 ADMIN_PASSWORD=test ANTHROPIC_API_KEY=sk-ant-... DATABASE_URL=postgres://... npm start
 ```
+
+## 📊 Natiijooyinka Form 4 (cusub)
+
+Tab cusub oo **📊 Natiijooyin** ah (maamulka oo keliya):
+
+- **✍️ Gelin**: ku shub dhibcaha ardayda (gacanta ama **📋 Ku dheji** Excel). **Wadarta, celceliska, heerka (A–F) iyo booska** waa iskaa u xisaabmaan. Maaddooyinka iyo dhibcaha gudbinta (Pass mark) waa la beddeli karaa.
+- **📚 Maaddooyin**: celcelis, ugu sarreeya/hooseeya, % gudbay, SD, boos, graphs, iyo falanqeyn maaddo-maaddo (maadada ugu fiican iyo ugu liidata).
+- **🎓 Arday**: 10-ka ugu sarreeya/hooseeya, qaybinta heerarka, ardayda u baahan taageero, iyo falanqeyn arday kasta oo graph leh (arday vs celceliska fasalka).
+- **📄 Warbixin**: warbixin dhammaystiran oo daabacan karta (🖨️ Daabac / Save PDF).
+- 💾 **Keydi**: natiijooyinka waxaa lagu keydiyaa Postgres (`result_sets`) — mar dambe ka fur liiska "Natiijooyin hore".
