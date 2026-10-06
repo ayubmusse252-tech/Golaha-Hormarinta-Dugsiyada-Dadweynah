@@ -58,6 +58,14 @@ async function initDb() {
     cost_usd NUMERIC(12,6) NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ DEFAULT now()
   )`);
+  // Natiijooyinka ardayda (Form 4): xog dhammaystiran oo JSON ah
+  await pool.query(`CREATE TABLE IF NOT EXISTS result_sets (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL DEFAULT '',
+    class_name TEXT NOT NULL DEFAULT 'Form 4',
+    data JSONB NOT NULL DEFAULT '{}',
+    updated_at TIMESTAMPTZ DEFAULT now()
+  )`);
   console.log("✅ Database ready");
 }
 initDb().catch((e) => console.error("DB init error:", e));
@@ -1390,4 +1398,37 @@ app.use(
 app.get("/", (req, res) => res.sendFile(path.join(__dirname, "public", "index.html")));
 
 const PORT = process.env.PORT || 3000;
+
+// ---------- Natiijooyinka ardayda (Form 4) ----------
+app.get("/api/results", requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query("SELECT id, name, class_name, updated_at, jsonb_array_length(COALESCE(data->'students','[]'::jsonb)) AS n FROM result_sets ORDER BY updated_at DESC LIMIT 100");
+    res.json(rows);
+  } catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+});
+app.get("/api/results/:id", requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query("SELECT id, name, class_name, data FROM result_sets WHERE id=$1", [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: "lama helin" });
+    res.json(rows[0]);
+  } catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+});
+app.post("/api/results", requireAdmin, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const id = b.id || crypto.randomUUID();
+    const data = { subjects: Array.isArray(b.subjects) ? b.subjects.slice(0, 20) : [], students: Array.isArray(b.students) ? b.students.slice(0, 500) : [], pass: Number(b.pass) || 50 };
+    await pool.query(
+      `INSERT INTO result_sets (id, name, class_name, data, updated_at) VALUES ($1,$2,$3,$4,now())
+       ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, class_name=EXCLUDED.class_name, data=EXCLUDED.data, updated_at=now()`,
+      [id, String(b.name || "").slice(0, 200), String(b.class_name || "Form 4").slice(0, 50), JSON.stringify(data)]
+    );
+    res.json({ ok: true, id });
+  } catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+});
+app.delete("/api/results/:id", requireAdmin, async (req, res) => {
+  try { await pool.query("DELETE FROM result_sets WHERE id=$1", [req.params.id]); res.json({ ok: true }); }
+  catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+});
+
 app.listen(PORT, () => console.log(`🚀 Server wuxuu ku shaqeynayaa port ${PORT}`));
