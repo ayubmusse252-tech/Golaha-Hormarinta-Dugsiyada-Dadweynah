@@ -7,6 +7,7 @@ import { fileURLToPath } from "url";
 const { Pool } = pkg;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
+app.set("trust proxy", true); // Railway proxy: req.ip sax ah
 app.use(express.json({ limit: "25mb" })); // raise limit: OCR requests carry page images
 
 // ---------- Database ----------
@@ -66,6 +67,10 @@ async function initDb() {
     data JSONB NOT NULL DEFAULT '{}',
     updated_at TIMESTAMPTZ DEFAULT now()
   )`);
+  // Link-ga ardayda: token gaar ah + ma la daabacay (published)
+  await pool.query(`ALTER TABLE result_sets ADD COLUMN IF NOT EXISTS public_token TEXT`);
+  await pool.query(`ALTER TABLE result_sets ADD COLUMN IF NOT EXISTS published BOOLEAN NOT NULL DEFAULT false`);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS result_sets_public_token_idx ON result_sets (public_token) WHERE public_token IS NOT NULL`);
   console.log("✅ Database ready");
 }
 initDb().catch((e) => console.error("DB init error:", e));
@@ -1408,7 +1413,7 @@ app.get("/api/results", requireAdmin, async (req, res) => {
 });
 app.get("/api/results/:id", requireAdmin, async (req, res) => {
   try {
-    const { rows } = await pool.query("SELECT id, name, class_name, data FROM result_sets WHERE id=$1", [req.params.id]);
+    const { rows } = await pool.query("SELECT id, name, class_name, data, public_token, published FROM result_sets WHERE id=$1", [req.params.id]);
     if (!rows.length) return res.status(404).json({ error: "lama helin" });
     res.json(rows[0]);
   } catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
@@ -1417,7 +1422,13 @@ app.post("/api/results", requireAdmin, async (req, res) => {
   try {
     const b = req.body || {};
     const id = b.id || crypto.randomUUID();
-    const data = { subjects: Array.isArray(b.subjects) ? b.subjects.slice(0, 20) : [], students: Array.isArray(b.students) ? b.students.slice(0, 500) : [], pass: Number(b.pass) || 50 };
+    const subjects = Array.isArray(b.subjects) ? b.subjects.slice(0, 20).map((x) => String(x).slice(0, 60)) : [];
+    const students = (Array.isArray(b.students) ? b.students.slice(0, 500) : []).map((x) => ({
+      name: String((x && x.name) || "").slice(0, 120),
+      id: String((x && x.id) || "").trim().slice(0, 60),
+      s: Array.isArray(x && x.s) ? x.s.slice(0, 20).map((v) => (v === "" || v == null ? "" : String(v).slice(0, 8))) : [],
+    }));
+    const data = { subjects, students, pass: Number(b.pass) || 50 };
     await pool.query(
       `INSERT INTO result_sets (id, name, class_name, data, updated_at) VALUES ($1,$2,$3,$4,now())
        ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, class_name=EXCLUDED.class_name, data=EXCLUDED.data, updated_at=now()`,
@@ -1430,5 +1441,83 @@ app.delete("/api/results/:id", requireAdmin, async (req, res) => {
   try { await pool.query("DELETE FROM result_sets WHERE id=$1", [req.params.id]); res.json({ ok: true }); }
   catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
 });
+
+// ---------- Link-ga ardayda: arday kasta ID-giisa ayuu ku arkaa natiijadiisa ----------
+app.post("/api/results/:id/publish", requireAdmin, async (req, res) => {
+  try {
+    const on = req.body && req.body.on === false ? false : true;
+    const regen = !!(req.body && req.body.regen);
+    const cur = await pool.query("SELECT public_token FROM result_sets WHERE id=$1", [req.params.id]);
+    if (!cur.rows.length) return res.status(404).json({ error: "Natiijada marka hore keydi." });
+    let token = cur.rows[0].public_token;
+    if (!token || regen) token = crypto.randomBytes(9).toString("base64url");
+    await pool.query("UPDATE result_sets SET public_token=$2, published=$3 WHERE id=$1", [req.params.id, token, on]);
+    res.json({ ok: true, token, published: on });
+  } catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+});
+
+const lookupHits = new Map(); // ip+token -> { n, reset }
+function lookupAllowed(key) {
+  const now = Date.now();
+  let h = lookupHits.get(key);
+  if (!h || h.reset < now) h = { n: 0, reset: now + 10 * 60 * 1000 };
+  h.n++;
+  lookupHits.set(key, h);
+  if (lookupHits.size > 5000) for (const [k, v] of lookupHits) if (v.reset < now) lookupHits.delete(k);
+  return h.n <= 25;
+}
+const normId = (v) => {
+  const t = String(v == null ? "" : v).trim().toLowerCase().replace(/\s+/g, "");
+  return /^\d+$/.test(t) ? t.replace(/^0+(?=\d)/, "") : t;
+};
+const gradeOf = (a, pass) => (a == null ? "" : a >= 80 ? "A" : a >= 70 ? "B" : a >= 60 ? "C" : a >= pass ? "D" : "F");
+
+app.get("/n/:token", (req, res) => {
+  res.setHeader("X-Robots-Tag", "noindex, nofollow");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("Cache-Control", "no-store");
+  res.sendFile(path.join(__dirname, "public", "natiijo.html"));
+});
+
+app.get("/api/public/result-info/:token", async (req, res) => {
+  try {
+    const { rows } = await pool.query("SELECT name FROM result_sets WHERE public_token=$1 AND published=true", [req.params.token]);
+    if (!rows.length) return res.status(404).json({ error: "Link-gan ma shaqeynayo ama waa la xiray." });
+    res.json({ name: rows[0].name });
+  } catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+});
+
+app.post("/api/public/result", async (req, res) => {
+  try {
+    const token = String((req.body && req.body.token) || "");
+    const sid = normId(req.body && req.body.id);
+    if (!lookupAllowed(req.ip + "|" + token)) return res.status(429).json({ error: "Isku-day badan. Fadlan ku celi 10 daqiiqo kadib." });
+    if (!token || !sid) return res.status(400).json({ error: "Geli ID-gaaga." });
+    const { rows } = await pool.query("SELECT name, data FROM result_sets WHERE public_token=$1 AND published=true", [token]);
+    if (!rows.length) return res.status(404).json({ error: "Link-gan ma shaqeynayo ama waa la xiray." });
+    const d = rows[0].data || {};
+    const pass = Number(d.pass) || 50;
+    const subjects = d.subjects || [];
+    const nz = (v) => (v === "" || v == null || isNaN(+v) ? null : +v);
+    const all = (d.students || []).map((s) => {
+      const v = subjects.map((_, i) => nz(s.s && s.s[i]));
+      const nn = v.filter((x) => x != null);
+      return { name: s.name || "", id: s.id || "", v, total: nn.length ? nn.reduce((a, b) => a + b, 0) : null, avg: nn.length ? nn.reduce((a, b) => a + b, 0) / nn.length : null };
+    }).filter((s) => s.avg != null);
+    const me = all.find((s) => normId(s.id) === sid);
+    if (!me) return res.status(404).json({ error: "ID-gan lama helin. Hubi ID-gaaga oo mar kale isku day." });
+    const rank = all.filter((x) => x.avg > me.avg).length + 1;
+    const rows2 = subjects.map((nm, i) => {
+      const vals = all.map((x) => x.v[i]).filter((x) => x != null);
+      return { subject: nm, score: me.v[i], classAvg: vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null, needsSupport: me.v[i] != null && me.v[i] < pass };
+    }).filter((r) => r.score != null);
+    res.json({
+      resultName: rows[0].name, name: me.name, id: me.id, pass,
+      total: me.total, avg: Math.round(me.avg * 10) / 10, grade: gradeOf(me.avg, pass), rank, of: all.length,
+      subjects: rows2.map((r) => ({ ...r, classAvg: r.classAvg == null ? null : Math.round(r.classAvg * 10) / 10 })),
+    });
+  } catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+});
+
 
 app.listen(PORT, () => console.log(`🚀 Server wuxuu ku shaqeynayaa port ${PORT}`));
