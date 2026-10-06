@@ -267,7 +267,11 @@
     <div class="row"><div><label>Natiijooyin hore</label><select id="rSaved"></select></div><div><label>Magaca natiijada</label><input id="rName" placeholder="tusaale: Midterm Form 4 – 2026"></div></div>
     <div class="row"><div><label>Dhibcaha gudbinta (Pass mark)</label><input id="rPass" type="number" min="0" max="100" value="50"></div><div><label>Maaddooyinka (kala sooc comma)</label><input id="rSubs"></div></div>
     <div class="actions"><button class="btn-ghost" id="rNewBtn" type="button">➕ Cusub</button><button class="btn-ghost" id="rSaveBtn" type="button">💾 Keydi</button><button class="btn-ghost" id="rDelBtn" type="button">🗑️ Tirtir</button></div>
+    <div class="actions"><button class="btn-ghost" id="rXlsBtn" type="button">📥 Soo geli Excel</button><button class="btn-ghost" id="rTplBtn" type="button">⬇️ Template</button></div>
+    <input id="rXlsFile" type="file" accept=".xlsx,.xls,.csv" class="hidden">
+    <button class="btn-primary" id="rMakeBtn" type="button">⚙️ Samee Natiijo</button>
     <div class="status" id="rStatus"></div>
+    <div id="rLink"></div>
   </div>
   <div class="tabs no-print" id="rViews"><button data-v="gelin" class="on" type="button">✍️ Gelin</button><button data-v="maado" type="button">📚 Maaddooyin</button><button data-v="arday" type="button">🎓 Arday</button><button data-v="warbixin" type="button">📄 Warbixin</button></div>
   <div id="rBody"></div>
@@ -1002,13 +1006,13 @@
   const mean=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:null;
   const sdv=a=>{if(a.length<2)return null;const m=mean(a);return Math.sqrt(mean(a.map(x=>(x-m)**2)));};
   const grade=a=>a==null?"":a>=80?"A":a>=70?"B":a>=60?"C":a>=R.pass?"D":"F";
-  function rNew(){R={id:null,name:"",pass:50,subjects:RES_SUBJ.slice(),students:[]};for(let i=0;i<5;i++)rAddStu();}
+  function rNew(){R={id:null,token:null,published:false,name:"",pass:50,subjects:RES_SUBJ.slice(),students:[]};for(let i=0;i<5;i++)rAddStu();}
   function rAddStu(){R.students.push({name:"",id:"",s:R.subjects.map(()=>"")});}
   function rCalc(){
     const st=R.students.map(s=>{const v=R.subjects.map((_,i)=>num(s.s[i]));const nn=v.filter(x=>x!=null);
-      return {name:s.name||"(magac la'aan)",v,total:nn.length?nn.reduce((a,b)=>a+b,0):null,avg:mean(nn),n:nn.length};}).filter(s=>s.n>0);
-    [...st].sort((a,b)=>b.avg-a.avg).forEach((s,i)=>s.rank=i+1);
-    st.forEach(s=>{s.grade=grade(s.avg);s.low=s.v.filter(x=>x!=null&&x<R.pass).length;});
+      return {name:s.name||"(magac la'aan)",id:s.id||"",v,total:nn.length?nn.reduce((a,b)=>a+b,0):null,avg:mean(nn),n:nn.length};}).filter(s=>s.n>0);
+    st.forEach(s=>{s.rank=st.filter(x=>x.avg>s.avg).length+1;});
+    st.forEach(s=>{s.grade=grade(s.avg);s.lowSubs=R.subjects.map((nm,i)=>({n:nm,v:s.v[i]})).filter(x=>x.v!=null&&x.v<R.pass);s.low=s.lowSubs.length;});
     const sub=R.subjects.map((nm,i)=>{const vals=st.map(s=>s.v[i]).filter(x=>x!=null);const p=vals.filter(x=>x>=R.pass).length;
       return {name:nm,i,n:vals.length,avg:mean(vals),max:vals.length?Math.max(...vals):null,min:vals.length?Math.min(...vals):null,pass:vals.length?p/vals.length:null,fail:vals.length-p,sd:sdv(vals)};});
     const ws=sub.filter(x=>x.avg!=null);[...ws].sort((a,b)=>b.avg-a.avg).forEach((s,i)=>s.rank=i+1);
@@ -1025,12 +1029,13 @@
   // ---- analysis blocks ----
   function kpiHTML(D){const pr=D.st.length?D.st.filter(s=>s.avg>=R.pass).length/D.st.length:null;
     return `<div class="kpis"><div class="kpi"><b>${D.st.length}</b><span>Arday</span></div><div class="kpi"><b>${f1(D.cls)}</b><span>Celceliska fasalka</span></div><div class="kpi"><b>${pr==null?"–":Math.round(pr*100)+"%"}</b><span>Gudbay</span></div><div class="kpi"><b>${D.best?esc(D.best.name):"–"}</b><span>Maadada ugu fiican (${D.best?f1(D.best.avg):"–"})</span></div><div class="kpi"><b>${D.worst?esc(D.worst.name):"–"}</b><span>Maadada ugu liidata (${D.worst?f1(D.worst.avg):"–"})</span></div></div>`;}
-  function subjHTML(D){
+  function subjHTML(D,detail){
     if(!D.ws.length)return `<div class="rtxt">Weli dhibco lama gelin.</div>`;
     let h=`<h2>📚 Falanqaynta Maaddooyinka</h2><div class="rscroll"><table class="rtbl"><tr><th class="l">Maaddada</th><th>Arday</th><th>Celcelis</th><th>Ugu sarreeya</th><th>Ugu hooseeya</th><th>% Gudbay</th><th>Dhacay</th><th>SD</th><th>Boos</th></tr>`+
       D.sub.filter(x=>x.avg!=null).map(x=>`<tr><td class="l"><b>${esc(x.name)}</b></td><td>${x.n}</td><td class="${x.avg<R.pass?"bad":""}">${f1(x.avg)}</td><td>${x.max}</td><td>${x.min}</td><td>${Math.round(x.pass*100)}%</td><td>${x.fail}</td><td>${f1(x.sd)}</td><td>${x.rank}</td></tr>`).join("")+`</table></div>`;
     h+=`<div class="ex-sub">Celceliska maaddo kasta</div>`+hbar(D.ws.map(x=>({l:x.name,v:x.avg,c:x.avg<R.pass?"#c0392b":x===D.best?"#1e8e5a":"#1e4fa3"})),100);
     h+=`<div class="ex-sub">Boqolkiiba ardayda gudbay</div>`+hbar(D.ws.map(x=>({l:x.name,v:x.pass*100,c:"#f2a900"})),100,v=>Math.round(v)+"%");
+    if(detail===false)return h;
     h+=`<div class="ex-sub">Falanqeyn maaddo-maaddo</div>`+D.ws.map(x=>{
       const vs=D.st.filter(s=>s.v[x.i]!=null).sort((a,b)=>b.v[x.i]-a.v[x.i]);const top=vs.slice(0,3).map(s=>s.name+" ("+s.v[x.i]+")").join(", "),low=vs.slice(-3).reverse().map(s=>s.name+" ("+s.v[x.i]+")").join(", ");
       const lvl=x.avg>=75?`<span class="good">aad u fiican</span>`:x.avg>=R.pass?"dhexdhexaad":`<span class="bad">u baahan taageero</span>`;
@@ -1043,51 +1048,58 @@
     let h=`<h2>🎓 Falanqaynta Ardayda</h2><div class="ex-sub">10-ka ugu sarreeya</div>`+hbar(S.slice(0,10).map(s=>({l:s.name,v:s.avg,c:"#1e8e5a"})),100)+
       `<div class="ex-sub">10-ka ugu hooseeya</div>`+hbar(S.slice(-10).reverse().map(s=>({l:s.name,v:s.avg,c:"#c0392b"})),100)+
       `<div class="ex-sub">Qaybinta heerarka</div>`+hbar(gs.map(g=>({l:g+(g==="F"?" (Hoose)":g==="D"?" (Gudbay)":""),v:D.st.filter(s=>s.grade===g).length,c:gcol(g)})),Math.max(1,D.st.length),v=>String(v));
-    const risk=S.filter(s=>s.avg<R.pass||s.low>=3);
-    h+=`<div class="ex-sub">Ardayda u baahan taageero (celcelis < ${R.pass} ama ≥3 maaddo oo hoose)</div><div class="rtxt">${risk.length?risk.map(s=>`${esc(s.name)} (celcelis ${f1(s.avg)}, ${s.low} maaddo hoose)`).join("; "):"Ardayna ma jiro."}</div>`;
-    h+=`<div class="ex-sub">Liiska dhammaan ardayda</div><div class="rscroll"><table class="rtbl"><tr><th>Boos</th><th class="l">Magaca</th><th>Wadarta</th><th>Celcelis</th><th>Heer</th></tr>`+S.map(s=>`<tr><td>${s.rank}</td><td class="l">${esc(s.name)}</td><td>${s.total}</td><td>${f1(s.avg)}</td><td style="color:${gcol(s.grade)};font-weight:700">${s.grade}</td></tr>`).join("")+`</table></div>`;
+    h+=`<div class="ex-sub">Liiska dhammaan ardayda</div><div class="rscroll"><table class="rtbl"><tr><th>Boos</th><th>ID</th><th class="l">Magaca</th><th>Wadarta</th><th>Celcelis</th><th>Heer</th></tr>`+S.map(s=>`<tr><td>${s.rank}</td><td>${esc(s.id)}</td><td class="l">${esc(s.name)}</td><td>${s.total}</td><td>${f1(s.avg)}</td><td style="color:${gcol(s.grade)};font-weight:700">${s.grade}</td></tr>`).join("")+`</table></div>`;
+    return h;}
+  function supportHTML(D){
+    const S=D.st.filter(s=>s.low>0).sort((a,b)=>b.low-a.low||a.avg-b.avg);
+    let h=`<h2>🆘 Falanqaynta Ardayda u Baahan Taageero</h2><div class="rtxt">Arday kasta oo ka hooseeya <b>${R.pass}%</b> maado ayaa loo aqoonsaday inuu u baahan yahay taageero maadadaas. <b>${S.length}</b> arday ka mid ah <b>${D.st.length}</b> ayaa u baahan taageero.</div>`;
+    if(!S.length)return h+`<div class="rtxt good">Ardayna kama hooseyso ${R.pass}% maado kasta.</div>`;
+    h+=`<div class="rscroll"><table class="rtbl"><tr><th>#</th><th>ID</th><th class="l">Magaca</th><th>Celcelis</th><th>Tirada maaddooyinka</th><th class="l">Maaddooyinka uu u baahan yahay taageero (dhibcaha)</th></tr>`+
+      S.map((s,i)=>`<tr><td>${i+1}</td><td>${esc(s.id)}</td><td class="l">${esc(s.name)}</td><td>${f1(s.avg)}</td><td class="${s.low>=3?"bad":""}">${s.low}</td><td class="l">${s.lowSubs.map(x=>`${esc(x.n)} (<span class="bad">${x.v}</span>)`).join(", ")}</td></tr>`).join("")+`</table></div>`;
+    h+=S.map(s=>`<div class="rtxt"><b>${esc(s.name)}</b>${s.id?` (ID: ${esc(s.id)})`:""} – wuxuu u baahan yahay taageero: ${s.lowSubs.map(x=>`<b>${esc(x.n)}</b>`).join(", ")}.${s.low>=3?` <i>Taageero degdeg ah iyo la socod joogto ah ayaa loo baahan yahay (${s.low} maaddo).</i>`:""}</div>`).join("");
     return h;}
   function stuProfile(D,idx){const s=[...D.st].sort((a,b)=>a.rank-b.rank)[idx];if(!s)return"";
     const sv=D.sub.map(x=>({n:x.name,v:s.v[x.i],c:x.avg})).filter(x=>x.v!=null),b=[...sv].sort((p,q)=>q.v-p.v);const pct=Math.round(100*(D.st.length-s.rank)/Math.max(1,D.st.length-1||1));
-    return `<div class="rtxt"><b>${esc(s.name)}</b> – boos <b>${s.rank}/${D.st.length}</b>, wadarta ${s.total}, celcelis ${f1(s.avg)}, heer <b style="color:${gcol(s.grade)}">${s.grade}</b>; wuxuu ka horreeyaa ${pct}% ardayda. Maadada ugu fiican: <span class="good">${esc(b[0].n)} (${b[0].v})</span>; ugu liidata: <span class="bad">${esc(b[b.length-1].n)} (${b[b.length-1].v})</span>. ${s.low?`Wuxuu ka hooseeyaa pass mark ${s.low} maaddo – waxaa loo baahan yahay taageero gaar ah iyadoo waalidkiisa la kaashanayo.`:"Dhammaan maaddooyinka wuu gudbay."}</div>`+pairs(sv.map(x=>x.n),sv.map(x=>x.v),sv.map(x=>x.c),s.name,"Celceliska fasalka");}
-  function sumHTML(D){if(!D.st.length)return"";const risk=D.st.filter(s=>s.avg<R.pass||s.low>=3).length,weak=D.ws.filter(x=>x.avg<R.pass).map(x=>x.name);
+    return `<div class="rtxt"><b>${esc(s.name)}</b> – boos <b>${s.rank}/${D.st.length}</b>, wadarta ${s.total}, celcelis ${f1(s.avg)}, heer <b style="color:${gcol(s.grade)}">${s.grade}</b>; wuxuu ka horreeyaa ${pct}% ardayda. Maadada ugu fiican: <span class="good">${esc(b[0].n)} (${b[0].v})</span>; ugu liidata: <span class="bad">${esc(b[b.length-1].n)} (${b[b.length-1].v})</span>. ${s.low?`Wuxuu ka hooseeyaa ${R.pass}% ${s.low} maaddo, wuxuuna u baahan yahay taageero: <b>${s.lowSubs.map(x=>esc(x.n)+" ("+x.v+")").join(", ")}</b>.`:"Dhammaan maaddooyinka wuu gudbay."}</div>`+pairs(sv.map(x=>x.n),sv.map(x=>x.v),sv.map(x=>x.c),s.name,"Celceliska fasalka");}
+  function sumHTML(D){if(!D.st.length)return"";const risk=D.st.filter(s=>s.low>0).length,weak=D.ws.filter(x=>x.avg<R.pass).map(x=>x.name);
     return `<div class="rtxt">Fasalka wuxuu leeyahay <b>${D.st.length}</b> arday, celcelis ahaan <b>${f1(D.cls)}</b>. Maaddada ugu fiican waa <span class="good">${esc(D.best.name)}</span> (${f1(D.best.avg)}), tan ugu liidata waa <span class="bad">${esc(D.worst.name)}</span> (${f1(D.worst.avg)}). ${weak.length?`Maaddooyinka u baahan taageero: ${esc(weak.join(", "))}.`:"Dhammaan maaddooyinka waa ka sarreeyaan pass mark."} ${risk} arday ayaa u baahan taageero gaar ah.</div><div class="rtxt"><i>Talooyin: macallimiinta maaddooyinka liita waxaa la siinayaa tababar kor loogu qaadayo aqoontooda; ardayda ku liita taageero gaar ah iyadoo waalidka la kaashanayo; maaddooyinka fiican heerkooda waa la ilaalinayaa.</i></div>`;}
   // ---- grid ----
   function gridHTML(){
-    return `<div class="card"><div class="actions no-print" style="margin:0 0 8px"><button class="btn-ghost" id="rAddBtn" type="button">➕ Arday</button><button class="btn-ghost" id="rPasteBtn" type="button">📋 Ku dheji (Excel)</button></div><div id="rPasteBox" class="hidden"><label>Ku dheji safaf: Magac, dhibcaha maaddooyinka (tab ama comma)</label><textarea id="rPaste"></textarea><button class="btn-ghost" id="rPasteGo" type="button" style="margin-top:6px">Soo geli</button></div>
-      <div class="rscroll"><table class="rtbl" id="rTbl"><tr><th>#</th><th class="l">Magaca</th>${R.subjects.map(s=>`<th>${esc(s)}</th>`).join("")}<th>Wadarta</th><th>Celcelis</th><th>Heer</th><th>Boos</th><th></th></tr>`+
-      R.students.map((s,r)=>`<tr data-r="${r}"><td>${r+1}</td><td class="l"><input class="nm" data-k="name" value="${esc(s.name)}" placeholder="Magaca ardayga"></td>${R.subjects.map((_,i)=>`<td><input type="number" min="0" max="100" data-k="${i}" value="${esc(s.s[i])}"></td>`).join("")}<td class="t"></td><td class="a"></td><td class="g"></td><td class="k"></td><td><button class="btn-ghost" data-del="${r}" type="button" style="padding:3px 8px">✕</button></td></tr>`).join("")+`</table></div><div class="status">Wadarta, celceliska, heerka iyo booska waa iskaa u xisaabmaan.</div></div>`;}
+    return `<div class="card"><div class="actions no-print" style="margin:0 0 8px"><button class="btn-ghost" id="rAddBtn" type="button">➕ Arday</button><button class="btn-ghost" id="rPasteBtn" type="button">📋 Ku dheji (Excel)</button></div><div id="rPasteBox" class="hidden"><label>Ku dheji safaf: ID, Magac, dhibcaha maaddooyinka (tab ama comma)</label><textarea id="rPaste"></textarea><button class="btn-ghost" id="rPasteGo" type="button" style="margin-top:6px">Soo geli</button></div>
+      <div class="rscroll"><table class="rtbl" id="rTbl"><tr><th>#</th><th>ID</th><th class="l">Magaca</th>${R.subjects.map(s=>`<th>${esc(s)}</th>`).join("")}<th>Wadarta</th><th>Celcelis</th><th>Heer</th><th>Boos</th><th></th></tr>`+
+      R.students.map((s,r)=>`<tr data-r="${r}"><td>${r+1}</td><td><input class="nm" style="min-width:80px;text-align:center" data-k="id" value="${esc(s.id)}" placeholder="ID"></td><td class="l"><input class="nm" data-k="name" value="${esc(s.name)}" placeholder="Magaca ardayga"></td>${R.subjects.map((_,i)=>`<td><input type="number" min="0" max="100" data-k="${i}" value="${esc(s.s[i])}"></td>`).join("")}<td class="t"></td><td class="a"></td><td class="g"></td><td class="k"></td><td><button class="btn-ghost" data-del="${r}" type="button" style="padding:3px 8px">✕</button></td></tr>`).join("")+`</table></div><div class="status">Wadarta, celceliska, heerka iyo booska waa iskaa u xisaabmaan.</div></div>`;}
   function gridRefresh(){const rows=[...document.querySelectorAll("#rTbl tr[data-r]")];
     const info=R.students.map(s=>{const nn=R.subjects.map((_,i)=>num(s.s[i])).filter(x=>x!=null);return {t:nn.length?nn.reduce((a,b)=>a+b,0):null,a:mean(nn)};});
     const avs=info.map(x=>x.a).filter(x=>x!=null);
     rows.forEach((tr,r)=>{const x=info[r];tr.querySelector(".t").textContent=x.t==null?"":x.t;tr.querySelector(".a").textContent=x.a==null?"":f1(x.a);const g=grade(x.a),c=tr.querySelector(".g");c.textContent=g;c.style.color=g?gcol(g):"";
       tr.querySelector(".k").textContent=x.a==null?"":avs.filter(v=>v>x.a).length+1;});}
-  function rRender(){const b=$("rBody");
+  function rRender(){const b=$("rBody");rLinkRender();
     document.querySelectorAll("#rViews button").forEach(x=>x.classList.toggle("on",x.dataset.v===rView));
     $("rName").value=R.name;$("rPass").value=R.pass;$("rSubs").value=R.subjects.join(", ");
     if(rView==="gelin"){b.innerHTML=gridHTML();gridRefresh();return;}
     const D=rCalc();
     if(rView==="maado")b.innerHTML=`<div class="card">${kpiHTML(D)}${subjHTML(D)}</div>`;
     else if(rView==="arday"){const S=[...D.st].sort((a,b)=>a.rank-b.rank);
-      b.innerHTML=`<div class="card">${stuHTML(D)}</div><div class="card"><h2>🔎 Falanqeyn arday kooban</h2><select id="rPick">${S.map((s,i)=>`<option value="${i}">${s.rank}. ${esc(s.name)}</option>`).join("")}</select><div id="rProf">${stuProfile(D,0)}</div></div>`;
+      b.innerHTML=`<div class="card">${stuHTML(D)}</div><div class="card">${supportHTML(D)}</div><div class="card"><h2>🔎 Falanqeyn arday kooban</h2><select id="rPick">${S.map((s,i)=>`<option value="${i}">${s.rank}. ${esc(s.name)}</option>`).join("")}</select><div id="rProf">${stuProfile(D,0)}</div></div>`;
       const pk=$("rPick");if(pk)pk.addEventListener("change",()=>{$("rProf").innerHTML=stuProfile(D,+pk.value);});}
     else b.innerHTML=`<div class="card" id="rRep"><div class="actions no-print"><button class="btn-ghost" id="rPrint" type="button">🖨️ Daabac / Save PDF</button></div>${reportBody(D)}</div>`,$("rPrint")&&$("rPrint").addEventListener("click",()=>rPrint(D));}
-  function reportBody(D){return `<h2 style="text-align:center">WARBIXINTA NATIIJADA FORM 4${R.name?" – "+esc(R.name):""}</h2><div class="sub" style="text-align:center">Golaha Horumarinta Dugsiyada Dadweynaha (GHDD)</div>${kpiHTML(D)}${sumHTML(D)}${subjHTML(D)}${stuHTML(D)}`;}
+  function reportBody(D){return `<h2 style="text-align:center">WARBIXINTA NATIIJADA FORM 4${R.name?" – "+esc(R.name):""}</h2><div class="sub" style="text-align:center">Golaha Horumarinta Dugsiyada Dadweynaha (GHDD)</div>${kpiHTML(D)}${sumHTML(D)}${subjHTML(D,false)}${stuHTML(D)}${supportHTML(D)}`;}
   function rPrint(D){const w=window.open("","_blank");if(!w)return;
-    w.document.write(`<html><head><meta charset="utf-8"><title>Warbixin</title><style>body{font-family:Arial,sans-serif;margin:18px;color:#111}h2{font-size:16px}.kpis{display:flex;gap:8px;flex-wrap:wrap}.kpi{border:1px solid #ccc;border-radius:8px;padding:8px;text-align:center;min-width:110px}.kpi b{display:block;color:#1e4fa3}.kpi span{font-size:11px;color:#555}table{border-collapse:collapse;width:100%;font-size:11px}th,td{border:1px solid #bbb;padding:3px 5px;text-align:center}.l{text-align:left}.rtxt{font-size:12px;line-height:1.5;margin:5px 0}.ex-sub{font-weight:700;margin:12px 0 4px}svg{max-width:560px}.good{color:#1e8e5a;font-weight:700}.bad{color:#c0392b;font-weight:700}.sub{font-size:12px;color:#555}</style></head><body>${reportBody(D)}</body></html>`);
+    w.document.write(`<html><head><meta charset="utf-8"><title>Warbixin</title><style>body{font-family:Arial,sans-serif;margin:18px;color:#111}h2{font-size:16px}.kpis{display:flex;gap:8px;flex-wrap:wrap}.kpi{border:1px solid #ccc;border-radius:8px;padding:8px;text-align:center;min-width:110px}.kpi b{display:block;color:#1e4fa3}.kpi span{font-size:11px;color:#555}table{border-collapse:collapse;width:100%;font-size:11px}th,td{border:1px solid #bbb;padding:3px 5px;text-align:center}.l{text-align:left}.rtxt{font-size:12px;line-height:1.5;margin:5px 0}.l{text-align:left}.ex-sub{font-weight:700;margin:12px 0 4px}svg{max-width:560px}.good{color:#1e8e5a;font-weight:700}.bad{color:#c0392b;font-weight:700}.sub{font-size:12px;color:#555}</style></head><body>${reportBody(D)}</body></html>`);
     w.document.close();setTimeout(()=>w.print(),400);}
   // ---- events ----
   document.addEventListener("input",e=>{
     if(!R||!e.target.closest||!e.target.closest("#rTbl"))return;
     const tr=e.target.closest("tr[data-r]");if(!tr)return;const s=R.students[+tr.dataset.r],k=e.target.dataset.k;
-    if(k==="name")s.name=e.target.value;else s.s[+k]=e.target.value;gridRefresh();});
+    if(k==="name")s.name=e.target.value;else if(k==="id")s.id=e.target.value;else s.s[+k]=e.target.value;gridRefresh();});
   document.addEventListener("click",e=>{
     if(!R)return;const t=e.target;
     if(t.dataset&&t.dataset.del!=null&&t.closest("#rTbl")){R.students.splice(+t.dataset.del,1);rRender();}
     else if(t.id==="rAddBtn"){rAddStu();rRender();}
     else if(t.id==="rPasteBtn")$("rPasteBox").classList.toggle("hidden");
     else if(t.id==="rPasteGo"){$("rPaste").value.split(/\r?\n/).filter(l=>l.trim()).forEach(l=>{const c=l.split(/\t|,|;/).map(x=>x.trim());if(!c[0])return;
-      const row={name:c[0],id:"",s:R.subjects.map((_,i)=>c[i+1]!=null&&!isNaN(+c[i+1])?c[i+1]:"")};
+      const hasId=c.length>2&&c[1]!==""&&isNaN(+c[1]),o=hasId?2:1;
+      const row={name:hasId?c[1]:c[0],id:hasId?c[0]:"",s:R.subjects.map((_,i)=>c[i+o]!=null&&c[i+o]!==""&&!isNaN(+c[i+o])?c[i+o]:"")};
       const emp=R.students.findIndex(s=>!s.name&&s.s.every(v=>v===""));if(emp>=0)R.students[emp]=row;else R.students.push(row);});rRender();}});
   $("rViews").addEventListener("click",e=>{const v=e.target.dataset&&e.target.dataset.v;if(v){rView=v;rRender();}});
   $("rName").addEventListener("input",()=>{R.name=$("rName").value;});
@@ -1095,12 +1107,65 @@
   $("rSubs").addEventListener("change",()=>{const n=$("rSubs").value.split(",").map(x=>x.trim()).filter(Boolean).slice(0,20);if(!n.length)return;
     R.students.forEach(s=>{s.s=n.map(nm=>{const i=R.subjects.indexOf(nm);return i>=0?s.s[i]:"";});});R.subjects=n;rRender();});
   $("rNewBtn").addEventListener("click",()=>{rNew();$("rSaved").value="";rRender();$("rStatus").textContent="";});
-  $("rSaveBtn").addEventListener("click",async()=>{try{R.name=$("rName").value||R.name||"Natiijo Form 4";
+  async function rSave(){R.name=$("rName").value||R.name||"Natiijo Form 4";
     const j=await api("/api/results",{method:"POST",body:JSON.stringify({id:R.id,name:R.name,class_name:"Form 4",subjects:R.subjects,students:R.students,pass:R.pass})});
-    R.id=j.id;$("rStatus").textContent="✅ Waa la keydiyay.";await rList(R.id);}catch(err){$("rStatus").textContent="❌ "+err.message;}});
+    R.id=j.id;await rList(R.id);return j;}
+  $("rSaveBtn").addEventListener("click",async()=>{try{await rSave();$("rStatus").textContent="✅ Waa la keydiyay.";}catch(err){$("rStatus").textContent="❌ "+err.message;}});
+  // ---- Link-ga ardayda ----
+  const rUrl=()=>location.origin+"/n/"+R.token;
+  function rLinkRender(){const el=$("rLink");if(!el)return;
+    if(!R||!R.token){el.innerHTML="";return;}
+    el.innerHTML=`<div class="card" style="margin:12px 0 0;background:var(--surface2)"><b>🔗 Link-ga Ardayda</b> ${R.published?`<span class="good">(furan)</span>`:`<span class="bad">(la xiray)</span>`}<div class="rtxt">Arday kasta wuxuu geli karaa <b>ID-giisa</b> oo keliya si uu u arko natiijadiisa.</div><input id="rLinkUrl" readonly value="${esc(rUrl())}"><div class="actions"><button class="btn-ghost" id="rLinkCopy" type="button">📋 Koobi</button><button class="btn-ghost" id="rLinkOpen" type="button">↗️ Fur</button><button class="btn-ghost" id="rLinkToggle" type="button">${R.published?"⏸ Xir":"▶️ Fur"}</button><button class="btn-ghost" id="rLinkNew" type="button">🔄 Link cusub</button></div></div>`;}
+  async function rPublish(on,regen){const j=await api("/api/results/"+R.id+"/publish",{method:"POST",body:JSON.stringify({on,regen})});R.token=j.token;R.published=j.published;rLinkRender();}
+  document.addEventListener("click",async e=>{const id=e.target&&e.target.id;if(!R||!id||id.indexOf("rLink")!==0)return;
+    try{
+      if(id==="rLinkCopy"){const u=rUrl();try{await navigator.clipboard.writeText(u);}catch(_){$("rLinkUrl").select();document.execCommand("copy");}$("rStatus").textContent="✅ Link-ga waa la koobiyay.";}
+      else if(id==="rLinkOpen")window.open(rUrl(),"_blank");
+      else if(id==="rLinkToggle"){await rSave();await rPublish(!R.published,false);}
+      else if(id==="rLinkNew"){if(!confirm("Link-gii hore wuu dhacayaa. Ma sii wadaa?"))return;await rSave();await rPublish(true,true);}
+    }catch(err){$("rStatus").textContent="❌ "+err.message;}});
+  // ---- Excel: soo geli + template + Samee Natiijo ----
+  const XLSX_URL="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+  $("rXlsBtn").addEventListener("click",()=>$("rXlsFile").click());
+  $("rTplBtn").addEventListener("click",async()=>{try{await loadScript(XLSX_URL);
+    const ws=XLSX.utils.aoa_to_sheet([["ID","Magac",...R.subjects],["1001","Magac Arday",...R.subjects.map(()=>"")],["1002","Magac Arday",...R.subjects.map(()=>"")]]);
+    ws["!cols"]=[{wch:12},{wch:28},...R.subjects.map(()=>({wch:14}))];
+    const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"Natiijo");XLSX.writeFile(wb,"Template-Natiijo-Form4.xlsx");
+  }catch(err){$("rStatus").textContent="❌ "+err.message;}});
+  $("rXlsFile").addEventListener("change",async()=>{const f=$("rXlsFile").files[0];$("rXlsFile").value="";if(!f)return;
+    try{$("rStatus").textContent="⏳ Excel waa la akhrinayaa...";await loadScript(XLSX_URL);
+      const wb=XLSX.read(await f.arrayBuffer(),{type:"array"});
+      const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,defval:"",raw:true});
+      let hi=rows.findIndex(r=>r.filter(c=>String(c).trim()!=="").length>=3);if(hi<0)throw new Error("Header-ka Excel lama helin (ugu yaraan 3 tiir).");
+      const H=rows[hi].map(c=>String(c).trim());
+      const idRe=/(^id$|\bid\b|lambar|admission)/i,skipRe=/^(wadarta|total|celcelis|average|avg|heer|grade|boos|rank|#|sn|s\/n|jinsi|gender|fasal|class|natiijo|result|%)/i;
+      let ci=H.findIndex(h=>idRe.test(h)),cn=H.findIndex((h,i)=>i!==ci&&/(magac|name|arday|student)/i.test(h));
+      if(cn<0)cn=H.findIndex((h,i)=>i!==ci&&h!=="");
+      const sc=H.map((h,i)=>i).filter(i=>i!==ci&&i!==cn&&H[i]!==""&&!skipRe.test(H[i]));
+      if(!sc.length)throw new Error("Maaddooyin lama helin. Tiirarka kale waa inay yeeshaan magac maaddo.");
+      let bad=0;const st=[];
+      rows.slice(hi+1).forEach(r=>{const name=String(r[cn]==null?"":r[cn]).trim(),id=ci>=0?String(r[ci]==null?"":r[ci]).trim():"";
+        const sv=sc.map(i=>{const v=r[i];if(v===""||v==null)return"";const n=+v;if(isNaN(n)||n<0||n>100){bad++;return"";}return String(n);});
+        if(!name&&!id&&sv.every(x=>x===""))return;st.push({name,id,s:sv});});
+      if(!st.length)throw new Error("Arday lama helin.");
+      R.subjects=sc.map(i=>H[i]).slice(0,20);R.students=st.slice(0,500).map(x=>({...x,s:x.s.slice(0,20)}));
+      const noId=st.filter(x=>!x.id).length,seen={},dup=new Set();st.forEach(x=>{const k=x.id.toLowerCase();if(!k)return;if(seen[k])dup.add(x.id);seen[k]=1;});
+      rView="gelin";rRender();
+      $("rStatus").innerHTML="✅ "+st.length+" arday iyo "+R.subjects.length+" maaddo waa la soo geliyay. Taabo <b>⚙️ Samee Natiijo</b>."+
+        (ci<0?"<br>⚠️ Tiir ID ah lama helin – ardayda link-ga kuma arki karaan natiijada.":noId?"<br>⚠️ "+noId+" arday ID ma lahan.":"")+
+        (dup.size?"<br>⚠️ ID soo noqnoqday: "+esc([...dup].slice(0,10).join(", ")):"")+(bad?"<br>⚠️ "+bad+" dhibic oo aan sax ahayn (0–100 ma aha) waa la ka tagay.":"");
+    }catch(err){$("rStatus").textContent="❌ "+err.message;}});
+  $("rMakeBtn").addEventListener("click",async()=>{try{
+      const D=rCalc();if(!D.st.length)throw new Error("Marka hore geli dhibcaha ardayda (gacanta ama Excel).");
+      $("rStatus").textContent="⏳ Natiijada waa la samaynayaa...";
+      if(!$("rName").value&&!R.name)R.name="Natiijo Form 4 – "+new Date().toLocaleDateString("en-GB");
+      await rSave();await rPublish(true,false);rView="warbixin";rRender();
+      const noId=R.students.filter(x=>(x.name||x.s.some(v=>v!==""))&&!x.id).length;
+      $("rStatus").innerHTML="✅ Natiijada waa la sameeyay, la keydiyay, link-ga ardayduna waa diyaar."+(noId?"<br>⚠️ "+noId+" arday ID ma lahan.":"");
+    }catch(err){$("rStatus").textContent="❌ "+err.message;}});
   $("rDelBtn").addEventListener("click",async()=>{if(!R.id||!confirm("Ma tirtirtaa natiijadan?"))return;try{await api("/api/results/"+R.id,{method:"DELETE"});rNew();await rList();rRender();$("rStatus").textContent="🗑️ Waa la tirtiray.";}catch(err){$("rStatus").textContent="❌ "+err.message;}});
   $("rSaved").addEventListener("change",async()=>{const id=$("rSaved").value;if(!id){rNew();rRender();return;}
-    try{const j=await api("/api/results/"+id),d=j.data||{};R={id:j.id,name:j.name,pass:d.pass||50,subjects:d.subjects&&d.subjects.length?d.subjects:RES_SUBJ.slice(),students:d.students||[]};if(!R.students.length)rAddStu();rRender();}catch(err){$("rStatus").textContent="❌ "+err.message;}});
+    try{const j=await api("/api/results/"+id),d=j.data||{};R={id:j.id,token:j.public_token||null,published:!!j.published,name:j.name,pass:d.pass||50,subjects:d.subjects&&d.subjects.length?d.subjects:RES_SUBJ.slice(),students:(d.students||[]).map(x=>({name:x.name||"",id:x.id||"",s:x.s||[]}))};if(!R.students.length)rAddStu();rRender();}catch(err){$("rStatus").textContent="❌ "+err.message;}});
   async function rList(sel){try{const rows=await api("/api/results");$("rSaved").innerHTML=`<option value="">— Cusub —</option>`+rows.map(r=>`<option value="${esc(r.id)}">${esc(r.name||"(magac la'aan)")} · ${r.n} arday</option>`).join("");if(sel)$("rSaved").value=sel;}catch(e){}}
   function rInit(){if(!R)rNew();rRender();rList(R.id);}
 
