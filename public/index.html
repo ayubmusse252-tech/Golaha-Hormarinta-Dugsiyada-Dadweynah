@@ -273,7 +273,7 @@
     <div class="status" id="rStatus"></div>
     <div id="rLink"></div>
   </div>
-  <div class="tabs no-print" id="rViews"><button data-v="gelin" class="on" type="button">✍️ Gelin</button><button data-v="maado" type="button">📚 Maaddooyin</button><button data-v="arday" type="button">🎓 Arday</button><button data-v="warbixin" type="button">📄 Warbixin</button></div>
+  <div class="tabs no-print" id="rViews"><button data-v="gelin" class="on" type="button">✍️ Gelin</button><button data-v="maado" type="button">📚 Maaddooyin</button><button data-v="arday" type="button">🎓 Arday</button><button data-v="taageero" type="button">🆘 Taageero</button><button data-v="warbixin" type="button">📄 Warbixin</button></div>
   <div id="rBody"></div>
 </div>
 <div id="teachTab" class="hidden">
@@ -1048,15 +1048,12 @@
     let h=`<h2>🎓 Falanqaynta Ardayda</h2><div class="ex-sub">10-ka ugu sarreeya</div>`+hbar(S.slice(0,10).map(s=>({l:s.name,v:s.avg,c:"#1e8e5a"})),100)+
       `<div class="ex-sub">10-ka ugu hooseeya</div>`+hbar(S.slice(-10).reverse().map(s=>({l:s.name,v:s.avg,c:"#c0392b"})),100)+
       `<div class="ex-sub">Qaybinta heerarka</div>`+hbar(gs.map(g=>({l:g+(g==="F"?" (Hoose)":g==="D"?" (Gudbay)":""),v:D.st.filter(s=>s.grade===g).length,c:gcol(g)})),Math.max(1,D.st.length),v=>String(v));
-    h+=`<div class="ex-sub">Liiska dhammaan ardayda</div><div class="rscroll"><table class="rtbl"><tr><th>Boos</th><th>ID</th><th class="l">Magaca</th><th>Wadarta</th><th>Celcelis</th><th>Heer</th></tr>`+S.map(s=>`<tr><td>${s.rank}</td><td>${esc(s.id)}</td><td class="l">${esc(s.name)}</td><td>${s.total}</td><td>${f1(s.avg)}</td><td style="color:${gcol(s.grade)};font-weight:700">${s.grade}</td></tr>`).join("")+`</table></div>`;
     return h;}
-  function supportHTML(D){
+  function supportHTML(D,tbl){
     const S=D.st.filter(s=>s.low>0).sort((a,b)=>b.low-a.low||a.avg-b.avg);
     let h=`<h2>🆘 Falanqaynta Ardayda u Baahan Taageero</h2><div class="rtxt">Arday kasta oo ka hooseeya <b>${R.pass}%</b> maado ayaa loo aqoonsaday inuu u baahan yahay taageero maadadaas. <b>${S.length}</b> arday ka mid ah <b>${D.st.length}</b> ayaa u baahan taageero.</div>`;
     if(!S.length)return h+`<div class="rtxt good">Ardayna kama hooseyso ${R.pass}% maado kasta.</div>`;
-    h+=`<div class="rscroll"><table class="rtbl"><tr><th>#</th><th>ID</th><th class="l">Magaca</th><th>Celcelis</th><th>Tirada maaddooyinka</th><th class="l">Maaddooyinka uu u baahan yahay taageero (dhibcaha)</th></tr>`+
-      S.map((s,i)=>`<tr><td>${i+1}</td><td>${esc(s.id)}</td><td class="l">${esc(s.name)}</td><td>${f1(s.avg)}</td><td class="${s.low>=3?"bad":""}">${s.low}</td><td class="l">${s.lowSubs.map(x=>`${esc(x.n)} (<span class="bad">${x.v}</span>)`).join(", ")}</td></tr>`).join("")+`</table></div>`;
-    h+=S.map(s=>`<div class="rtxt"><b>${esc(s.name)}</b>${s.id?` (ID: ${esc(s.id)})`:""} – wuxuu u baahan yahay taageero: ${s.lowSubs.map(x=>`<b>${esc(x.n)}</b>`).join(", ")}.${s.low>=3?` <i>Taageero degdeg ah iyo la socod joogto ah ayaa loo baahan yahay (${s.low} maaddo).</i>`:""}</div>`).join("");
+    if(tbl)h+=`<div class="rscroll"><table class="rtbl"><tr><th>#</th><th>ID</th><th class="l">Magaca</th><th class="l">Maaddooyinka uu u baahan yahay taageero (dhibcaha)</th></tr>`+S.map((s,i)=>`<tr><td>${i+1}</td><td>${esc(s.id)}</td><td class="l">${esc(s.name)}</td><td class="l">${s.lowSubs.map(x=>`${esc(x.n)} (<span class="bad">${x.v}</span>)`).join(", ")}</td></tr>`).join("")+`</table></div>`;
     return h;}
   function stuProfile(D,idx){const s=[...D.st].sort((a,b)=>a.rank-b.rank)[idx];if(!s)return"";
     const sv=D.sub.map(x=>({n:x.name,v:s.v[x.i],c:x.avg})).filter(x=>x.v!=null),b=[...sv].sort((p,q)=>q.v-p.v);const pct=Math.round(100*(D.st.length-s.rank)/Math.max(1,D.st.length-1||1));
@@ -1078,9 +1075,10 @@
     $("rName").value=R.name;$("rPass").value=R.pass;$("rSubs").value=R.subjects.join(", ");
     if(rView==="gelin"){b.innerHTML=gridHTML();gridRefresh();return;}
     const D=rCalc();
-    if(rView==="maado")b.innerHTML=`<div class="card">${kpiHTML(D)}${subjHTML(D)}</div>`;
+    if(rView==="taageero")b.innerHTML=`<div class="card">${supportHTML(D,true)}</div>`;
+    else if(rView==="maado")b.innerHTML=`<div class="card">${kpiHTML(D)}${subjHTML(D)}</div>`;
     else if(rView==="arday"){const S=[...D.st].sort((a,b)=>a.rank-b.rank);
-      b.innerHTML=`<div class="card">${stuHTML(D)}</div><div class="card">${supportHTML(D)}</div><div class="card"><h2>🔎 Falanqeyn arday kooban</h2><select id="rPick">${S.map((s,i)=>`<option value="${i}">${s.rank}. ${esc(s.name)}</option>`).join("")}</select><div id="rProf">${stuProfile(D,0)}</div></div>`;
+      b.innerHTML=`<div class="card">${stuHTML(D)}</div><div class="card"><h2>🔎 Falanqeyn arday kooban</h2><select id="rPick">${S.map((s,i)=>`<option value="${i}">${s.rank}. ${esc(s.name)}</option>`).join("")}</select><div id="rProf">${stuProfile(D,0)}</div></div>`;
       const pk=$("rPick");if(pk)pk.addEventListener("change",()=>{$("rProf").innerHTML=stuProfile(D,+pk.value);});}
     else b.innerHTML=`<div class="card" id="rRep"><div class="actions no-print"><button class="btn-ghost" id="rPrint" type="button">🖨️ Daabac / Save PDF</button></div>${reportBody(D)}</div>`,$("rPrint")&&$("rPrint").addEventListener("click",()=>rPrint(D));}
   function reportBody(D){return `<h2 style="text-align:center">WARBIXINTA NATIIJADA FORM 4${R.name?" – "+esc(R.name):""}</h2><div class="sub" style="text-align:center">Golaha Horumarinta Dugsiyada Dadweynaha (GHDD)</div>${kpiHTML(D)}${sumHTML(D)}${subjHTML(D,false)}${stuHTML(D)}${supportHTML(D)}`;}
