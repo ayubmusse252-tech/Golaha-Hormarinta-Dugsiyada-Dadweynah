@@ -2,6 +2,7 @@ import express from "express";
 import pkg from "pg";
 import crypto from "crypto";
 import fs from "fs";
+import zlib from "zlib";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -1411,10 +1412,20 @@ app.get("/t/:token", (req, res) => {
 
 // ---------- index.html waxaa laga dhisaa qaybo yaryar (public/src/*.part) si upload-ku u gooyn waayo ----------
 function assembleIndex() {
+  // 1) index.html.gz (hal fayl oo yar, isla meesha server.js) — habka ugu fudud ee upload-ka
+  const gzPath = path.join(__dirname, "index.html.gz");
+  if (fs.existsSync(gzPath)) {
+    try {
+      const html = zlib.gunzipSync(fs.readFileSync(gzPath)).toString("utf8");
+      if (!/<\/html>\s*$/i.test(html)) return { html: "", bad: ["index.html.gz: dhamaadkiisa waa la waayay — mar kale upload-garee"], parts: 1 };
+      return { html, bad: [], parts: 1 };
+    } catch (e) { return { html: "", bad: ["index.html.gz: wuu kharaab yahay ama waa la gooyay — mar kale upload-garee"], parts: 1 }; }
+  }
+  // 2) qaybo yaryar public/src/*.part
   const dir = path.join(__dirname, "public", "src");
   let man;
   try { man = JSON.parse(fs.readFileSync(path.join(dir, "manifest.json"), "utf8")); }
-  catch (e) { return null; } // qaybo ma jiraan -> isticmaal public/index.html caadi ah
+  catch (e) { return null; } // midna ma jiro -> isticmaal public/index.html caadi ah
   const bad = []; let html = "";
   for (const p of man.parts || []) {
     let buf;
@@ -1429,7 +1440,7 @@ function serveIndex(req, res, next) {
   if (!r) return next();
   res.setHeader("Cache-Control", "no-store");
   if (r.bad.length) {
-    return res.status(500).type("html").send('<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><body style="font-family:Arial;padding:18px;line-height:1.6"><h2>⚠️ Faylasha app-ka way dhamaystirnaayeen</h2><p>Qaybahan si buuxda looma upload-gareynin:</p><ul>' + r.bad.map((x) => "<li>" + x + "</li>").join("") + "</ul><p>Ku celi upload-ka qaybahaas (folder-ka <b>public/src</b>), kadibna fur bogga mar kale.</p></body>");
+    return res.status(500).type("html").send('<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><body style="font-family:Arial;padding:18px;line-height:1.6"><h2>⚠️ Faylasha app-ka way dhamaystirnaayeen</h2><p>Faylkan si buuxda looma upload-gareynin:</p><ul>' + r.bad.map((x) => "<li>" + x + "</li>").join("") + "</ul><p>Ku celi upload-ka faylkaas, kadibna fur bogga mar kale.</p></body>");
   }
   res.type("html").send(r.html);
 }
