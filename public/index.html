@@ -96,8 +96,8 @@
   .kpi{background:var(--surface2);border-radius:10px;padding:10px;text-align:center;}
   .kpi b{display:block;font-size:1.15rem;color:var(--accent);} .kpi span{font-size:.72rem;color:var(--dim);}
   .rtxt{font-size:.88rem;line-height:1.55;margin:6px 0;} .good{color:var(--good);font-weight:700;} .bad{color:var(--bad);font-weight:700;}
-  .tabs{display:flex;gap:8px;margin:0 0 14px;}
-  .tabs button{flex:1;background:var(--surface2);color:var(--text);border:1px solid var(--border);}
+  .tabs{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 14px;}
+  .tabs button{flex:1 1 auto;background:var(--surface2);color:var(--text);border:1px solid var(--border);}
   .tabs button.on{background:var(--accent);color:#fff;border-color:var(--accent);}
   #lpOut{margin-top:4px;}
   .lp-page{background:#fff;border:1px solid var(--border);padding:12px;margin-bottom:14px;font-family:"Times New Roman",serif;font-size:.85rem;color:#000;}
@@ -177,6 +177,7 @@
     <button id="tabLib" type="button">📚 Maktabadda</button>
     <button id="tabTeach" type="button">👩‍🏫 Macallimiin</button>
     <button id="tabRes" type="button">📊 Natiijooyin</button>
+    <button id="tabSch" type="button">🏫 Dugsiyo</button>
   </div>
 <div id="examTab">
   <div class="card no-print">
@@ -275,6 +276,28 @@
   </div>
   <div class="tabs no-print" id="rViews"><button data-v="gelin" class="on" type="button">✍️ Gelin</button><button data-v="maado" type="button">📚 Maaddooyin</button><button data-v="arday" type="button">🎓 Arday</button><button data-v="taageero" type="button">🆘 Taageero</button><button data-v="warbixin" type="button">📄 Warbixin</button></div>
   <div id="rBody"></div>
+</div>
+<div id="schTab" class="hidden">
+  <div class="card no-print">
+    <h2>🏫 Natiijooyinka Dugsiyada (isku-darsan)</h2>
+    <p class="sub">Ku dar natiijada dugsi kasta (Excel ama ku dheji). Nidaamku wuxuu isku dubaridaa xogta dhammaan dugsiyada, wuxuuna kuu muujiyaa mid-mid dugsi-dugsi.</p>
+    <div class="row"><div><label>Natiijooyin hore</label><select id="mSaved"></select></div><div><label>Magaca natiijada</label><input id="mName" placeholder="tusaale: Imtixaanka Dhexe – Dugsiyada 2026"></div></div>
+    <div class="row"><div><label>Dhibcaha gudbinta (Pass mark)</label><input id="mPass" type="number" min="0" max="100" value="50"></div><div><label>Maaddooyinka (waa la isku daraa)</label><input id="mSubs" readonly placeholder="waxay ka imaanayaan faylasha"></div></div>
+    <div class="card" style="background:var(--surface2);margin:12px 0 0">
+      <b>➕ Ku dar natiijada dugsi</b>
+      <div class="row" style="margin-top:8px"><div><label>Magaca dugsiga</label><input id="mSchool" placeholder="tusaale: Dugsiga Hodan"></div><div><label>Fasalka</label><input id="mCls" value="Form 4"></div></div>
+      <div class="actions"><button class="btn-ghost" id="mXlsBtn" type="button">📥 Soo geli Excel</button><button class="btn-ghost" id="mPasteBtn" type="button">📋 Ku dheji</button><button class="btn-ghost" id="mTplBtn" type="button">⬇️ Template</button></div>
+      <input id="mXlsFile" type="file" accept=".xlsx,.xls,.csv" class="hidden">
+      <div id="mPasteBox" class="hidden"><label style="margin-top:8px">Ku dheji Excel-ka (safka koowaad = ID, Magac, maaddooyinka)</label><textarea id="mPaste"></textarea><button class="btn-ghost" id="mPasteGo" type="button" style="margin-top:6px">Soo geli</button></div>
+      <div class="status">Haddii aad mar kale geliso isla dugsiga + fasalka, xogtii hore waa la bedelayaa (lama laablaabayo).</div>
+    </div>
+    <div class="actions"><button class="btn-ghost" id="mNewBtn" type="button">➕ Cusub</button><button class="btn-ghost" id="mSaveBtn" type="button">💾 Keydi</button><button class="btn-ghost" id="mDelBtn" type="button">🗑️ Tirtir</button></div>
+    <button class="btn-primary" id="mMakeBtn" type="button">⚙️ Samee Natiijo (isku-darsan + link)</button>
+    <div class="status" id="mStatus"></div>
+    <div id="mLink"></div>
+  </div>
+  <div class="tabs no-print" id="mViews"><button data-v="dugsiyo" class="on" type="button">🏫 Dugsiyada</button><button data-v="isku" type="button">🔀 Isku-darsan</button><button data-v="dugsi" type="button">🏫 Dugsi-dugsi</button><button data-v="arday" type="button">🎓 Arday</button></div>
+  <div id="mBody"></div>
 </div>
 <div id="teachTab" class="hidden">
   <div class="card no-print">
@@ -1156,232 +1179,152 @@
   async function rList(sel){try{const rows=await api("/api/results");$("rSaved").innerHTML=`<option value="">— Cusub —</option>`+rows.map(r=>`<option value="${esc(r.id)}">${esc(r.name||"(magac la'aan)")} · ${r.n} arday</option>`).join("");if(sel)$("rSaved").value=sel;}catch(e){}}
   function rInit(){if(!R)rNew();rRender();rList(R.id);}
 
-  // ---------- Lesson Plan + Lesson Note ----------
-  function showTab(name){
-    $("examTab").classList.toggle("hidden", name!=="exam");
-    $("lpTab").classList.toggle("hidden", name!=="lp");
-    $("libTab").classList.toggle("hidden", name!=="lib");
-    $("teachTab").classList.toggle("hidden", name!=="teach");
-    $("resTab").classList.toggle("hidden", name!=="res");
-    $("tabRes").classList.toggle("on", name==="res");
-    if (name==="res") rInit();
-    $("tabTeach").classList.toggle("on", name==="teach");
-    $("tabExam").classList.toggle("on", name==="exam");
-    $("tabLp").classList.toggle("on", name==="lp");
-    $("tabLib").classList.toggle("on", name==="lib");
-    if (name==="lp") lpLoadList();
-    if (name==="lib") libLoad();
-    if (name==="teach") thLoad();
+  // ---------- 🏫 Natiijooyinka Dugsiyada: isku-darsan + dugsi-dugsi ----------
+  let M=null, mView="dugsiyo", mFilter="", mQ="", mDall=null;
+  const mGrade=(a,p)=>a==null?"":a>=80?"A":a>=70?"B":a>=60?"C":a>=p?"D":"F";
+  const mKey=(s,c)=>String(s||"").trim().toLowerCase()+"|"+String(c||"").trim().toLowerCase();
+  const mNoSch="(dugsi la'aan)";
+  function mNew(){M={id:null,token:null,published:false,name:"",pass:50,subjects:[],students:[]};}
+  function mCalc(list){
+    const P=M.pass;
+    const st=list.map(s=>{const v=M.subjects.map((_,i)=>num(s.s[i]));const nn=v.filter(x=>x!=null);
+      return {school:s.school||"",cls:s.cls||"",name:s.name||"(magac la'aan)",id:s.id||"",v,total:nn.length?nn.reduce((a,b)=>a+b,0):null,avg:mean(nn),n:nn.length};}).filter(s=>s.n>0);
+    const byG={};st.forEach(s=>{const k=mKey(s.school,s.cls);(byG[k]=byG[k]||[]).push(s);});
+    const rkMap=a=>{const m=new Map();[...a].sort((x,y)=>y-x).forEach((v,i)=>{if(!m.has(v))m.set(v,i+1);});return m;};
+    const allRk=rkMap(st.map(s=>s.avg)),gRk={};Object.keys(byG).forEach(k=>{gRk[k]=rkMap(byG[k].map(s=>s.avg));});
+    st.forEach(s=>{const k=mKey(s.school,s.cls);s.rank=allRk.get(s.avg);s.grank=gRk[k].get(s.avg);s.gof=byG[k].length;s.grade=mGrade(s.avg,P);s.low=s.v.filter(x=>x!=null&&x<P).length;});
+    const sub=M.subjects.map((nm,i)=>{const vals=st.map(s=>s.v[i]).filter(x=>x!=null);const p=vals.filter(x=>x>=P).length;
+      return {name:nm,i,n:vals.length,avg:mean(vals),max:vals.length?Math.max(...vals):null,min:vals.length?Math.min(...vals):null,pass:vals.length?p/vals.length:null,fail:vals.length-p};});
+    const ws=sub.filter(x=>x.avg!=null);[...ws].sort((a,b)=>b.avg-a.avg).forEach((s,i)=>s.rank=i+1);
+    return {st,sub,ws,best:[...ws].sort((a,b)=>b.avg-a.avg)[0],worst:[...ws].sort((a,b)=>a.avg-b.avg)[0],cls:mean(st.map(s=>s.avg)),pr:st.length?st.filter(s=>s.avg>=P).length/st.length:null};
   }
-  $("tabExam").addEventListener("click", ()=>showTab("exam"));
-  $("tabLp").addEventListener("click", ()=>showTab("lp"));
-  $("tabLib").addEventListener("click", ()=>showTab("lib"));
-  $("tabTeach").addEventListener("click", ()=>showTab("teach"));
-  $("tabRes").addEventListener("click", ()=>showTab("res"));
-  initPicker(document.querySelector('.lib-pick[data-pick="lp"]'), {
-    pages: ()=>document.querySelector('.lib-pick[data-pick="lp"] .lib-pages'),
-    text: ()=>$("lpText"), subject: ()=>$("lpSubject"), klass: ()=>$("lpClass")
-  });
-
-  // Dhammaan qoraallada shaxda lesson plan-ka waxay raacaan luqadda casharka/buugga (so / en / ar)
-  const LP_L = {
-    en: { title:"LESSON PLAN", teacher:"TEACHER NAME", cls:"Class", subject:"Subject", date:"Date", day:"Day", unit:"Unit", lesson:"Lesson", time:"Time", session:"Lesson/Session",
-      intro:"Introduction", obj:"Lesson Objectives", lead:"Insha Allah, after the end of the lesson, the learner should be able to:", methods:"Teaching Methods", aids:"LEARNING AIDS", evalu:"Evaluation",
-      tm:"Time Management", no:"No.", stage:"Stage / Activity", mins:"Time (min)", total:"Total", weekly:"Weekly", minWord:"min",
-      acts:["Question of the last lesson","Attendance of students","Explanation","Evaluation of lesson and homework"],
-      note:"LESSON NOTE", head:"Head of Education Office:", stamp:"Stamp" },
-    so: { title:"QORSHAHA CASHARKA", teacher:"MAGACA MACALINKA", cls:"Fasalka", subject:"Maadada", date:"Taariikhda", day:"Maalinta", unit:"Cutubka", lesson:"Casharka", time:"Waqtiga", session:"Xiisadda",
-      intro:"Hordhac", obj:"Ujeeddooyinka Casharka", lead:"Insha Allah, dhammaadka casharka ka dib, ardayga waxaa laga filayaa inuu awoodo inuu:", methods:"Hababka Waxbarida", aids:"QALABKA WAXBARIDA", evalu:"Qiimeyn",
-      tm:"Maaraynta Waqtiga", no:"Lam.", stage:"Heerka / Hawsha", mins:"Waqtiga (daqiiqo)", total:"Wadarta", weekly:"Usbuuclaha", minWord:"daqiiqo",
-      acts:["Su'aal ka mid ah casharkii hore","Xaadiridda ardayda","Sharaxaad","Qiimeynta casharka iyo shaqada guriga"],
-      note:"QORAALKA CASHARKA", head:"Madaxa Xafiiska Waxbarashada:", stamp:"Shaabad" },
-    ar: { title:"خطة الدرس", teacher:"اسم المعلم", cls:"الصف", subject:"المادة", date:"التاريخ", day:"اليوم", unit:"الوحدة", lesson:"الدرس", time:"الزمن", session:"الحصة",
-      intro:"المقدمة", obj:"أهداف الدرس", lead:"إن شاء الله، بعد نهاية الدرس يُتوقع أن يكون المتعلم قادرًا على:", methods:"طرق التدريس", aids:"الوسائل التعليمية", evalu:"التقويم",
-      tm:"إدارة الوقت", no:"م", stage:"المرحلة / النشاط", mins:"الزمن (دقيقة)", total:"المجموع", weekly:"الأسبوعي", minWord:"دقيقة",
-      acts:["سؤال عن الدرس السابق","حضور الطلاب","الشرح","تقويم الدرس والواجب المنزلي"],
-      note:"مذكرة الدرس", head:"مدير مكتب التعليم:", stamp:"الختم" },
-  };
-  function lpRender(d){
-    const m = d.meta||{}, p = d.plan||{};
-    const Lb = LP_L[m.lang] || LP_L.en;
-    const H = t=>`<div class="lp-h">${t}</div>`;
-    const list = a=>(a||[]).map((x,i)=>`<div>${i+1}. ${esc(x)}</div>`).join("");
-    const note = (p.note||[]).map(s=>`<div class="lp-nh">${esc(s.h)}</div>` +
-      String(s.p||"").split("\n").filter(Boolean).map(x=>`<p>${esc(x)}</p>`).join("")).join("");
-    const img = `<img class="lp-img" src="/letterhead.jpg" alt="">`;
-    const rtl = m.lang === "ar" ? ' dir="rtl"' : "";
-    // "40 min" → "40 daqiiqo" / "40 دقيقة" (raac luqadda); qoraal kale waa sida uu yahay
-    const dm = String(m.duration||"").trim().match(/^(\d+)\s*(?:min(?:ute)?s?|daqiiq\w*|دقيقة|دقائق|د)?$/i);
-    const durTxt = dm ? dm[1] + " " + Lb.minWord : (m.duration||"");
-    const tot = parseInt(String(m.duration||"").match(/\d+/), 10) || 40;
-    const w = [0.125, 0.075, 0.55, 0.25];
-    const mins = w.map(x=>Math.max(1, Math.round(tot*x)));
-    mins[2] += tot - mins.reduce((a,x)=>a+x,0);
-    const tm = Lb.acts.map((t,i)=>[t, mins[i]]);
-    lpOut.innerHTML = `<div class="lp-page">${img}<div class="lp-title">${Lb.title} 2026-2027</div>
-      <div class="lp-grid">
-        <div class="lp-c"${rtl}><b>${Lb.teacher}:</b> ${esc(m.teacher)}</div>
-        <div class="lp-info"${rtl}>${[[Lb.cls,m.klass],[Lb.subject,m.subject],[Lb.date,m.date],[Lb.day,m.day],[Lb.unit,m.unit],[Lb.lesson,m.lesson,"w"],[Lb.time,durTxt],[Lb.session,m.session]]
-          .map(x=>`<div${x[2]?' class="w"':''}><div class="il">${x[0]}</div><div class="iv">${esc(x[1])||"&nbsp;"}</div></div>`).join("")}</div>
-        ${H(Lb.intro)}<div class="lp-v"${rtl}>${esc(p.introduction)}</div>
-        ${H(Lb.obj)}<div class="lp-v"${rtl}><b>${Lb.lead}</b>${list(p.objectives)}</div>
-        ${H(Lb.methods)}<div class="lp-v"${rtl}>${esc(p.methods)}</div>
-        ${H(Lb.aids)}<div class="lp-v"${rtl}>${esc(p.aids)}</div>
-        ${H(Lb.evalu)}<div class="lp-v lp-ev"${rtl}>${list(p.evaluation)}</div>
-      </div>
-      <div class="lp-tmw">${H(Lb.tm)}
-      <table class="lp-tt"${rtl}><tr><th class="c">${Lb.no}</th><th>${Lb.stage}</th><th class="c">${Lb.mins}</th></tr>
-      ${tm.map((r,i)=>`<tr><td class="c">${i+1}</td><td>${r[0]}</td><td class="c">${r[1]}</td></tr>`).join("")}
-      <tr><td></td><td><b>${Lb.total}</b></td><td class="c"><b>${tm.reduce((a,r)=>a+r[1],0)}</b></td></tr>
-      <tr><td></td><td><b>${Lb.weekly}</b></td><td class="c">${esc(m.weekly)||"&nbsp;"}</td></tr></table></div></div>
-      <div class="lp-page">${img}<div class="lp-title">${Lb.note}</div>
-        <div class="lp-note"${rtl}><div class="lp-nh2">${esc([m.unit,m.lesson].filter(Boolean).join(" — "))}</div>${note}</div>
-        <div class="lp-sign"${rtl}><div class="sl">${Lb.head}<span>&nbsp;</span></div><div class="st">${Lb.stamp}</div></div></div>`;
-    lpOut.contentEditable = "true";
-    ["lpOut","lpActions","lpHint"].forEach(i=>$(i).classList.remove("hidden"));
-  }
-  const lpOut = $("lpOut");
-
-  async function lpLoadList(){
-    const el = $("lpSaved");
-    try{
-      const rows = await api("/api/lesson-plans");
-      if (!rows.length){ el.textContent = "Wali lesson plan lama keydin."; return; }
-      el.innerHTML = rows.map(r=>`<div class="saved-item"><div><b>${esc(r.subject||"-")}</b> — ${esc(r.class_name||"")}
-        <div class="meta">${esc(r.title||"")} · ${new Date(r.created_at).toLocaleDateString()}</div></div>
-        <div class="sv-btns"><button class="btn-ghost" data-lo="${r.id}">👁️ Fur</button>
-        <button class="btn-ghost" data-ld="${r.id}" style="color:var(--bad);">🗑️</button></div></div>`).join("");
-      el.querySelectorAll("[data-lo]").forEach(b=>b.addEventListener("click", async ()=>{
-        try{ lpRender(await api("/api/lesson-plans/"+b.dataset.lo)); lpOut.scrollIntoView({behavior:"smooth"}); }catch(e){ alert("Khalad: "+e.message); }
-      }));
-      el.querySelectorAll("[data-ld]").forEach(b=>b.addEventListener("click", async ()=>{
-        if (!confirm("Ma hubtaa inaad tirtirto?")) return;
-        await api("/api/lesson-plans/"+b.dataset.ld, {method:"DELETE"}); lpLoadList();
-      }));
-    } catch(e){ el.textContent = "⚠️ Khalad soo dejin ah."; }
-  }
-
-  $("lpGen").addEventListener("click", async ()=>{
-    const v = id=>$(id).value.trim(), err = $("lpErr");
-    if (!v("lpUnit") && !v("lpLesson")){ err.textContent = "⚠️ Fadlan geli cutubka ama cinwaanka casharka."; err.classList.remove("hidden"); return; }
-    err.classList.add("hidden");
-    $("lpGen").disabled = true; $("lpStatus").textContent = "⏳ Waa la dejinayaa lesson plan-ka iyo note-ka... (20-40 ilbiriqsi)";
-    try{
-      const r = await api("/api/generate-lesson-plan", {method:"POST", body: JSON.stringify({
-        teacher:v("lpTeacher"), klass:v("lpClass"), subject:v("lpSubject"), unit:v("lpUnit"), lesson:v("lpLesson"),
-        date:v("lpDate"), day:v("lpDay"), session:v("lpSession"), weekly:v("lpWeekly"), duration:v("lpDur"),
-        numObjectives:v("lpNObj"), lang:$("lpLang").value, text:v("lpText") })});
-      lpRender(r); $("lpStatus").textContent = "✅ Waa la diyaariyay oo la keydiyay."; lpLoadList();
-      lpOut.scrollIntoView({behavior:"smooth"});
-    } catch(e){ err.textContent = "⚠️ " + (e.message||"Khalad"); err.classList.remove("hidden"); $("lpStatus").textContent = ""; }
-    finally { $("lpGen").disabled = false; }
-  });
-  $("lpPrint").addEventListener("click", ()=>window.print());
-
-  // ---------- Macallimiin (user + link) ----------
-  let thPairs = [];      // [{klass, subject}] ee foomka
-  let thEditId = null;   // haddii wax laga beddelayo macallin jira
-  let thRows = [];
-  const thLink = t => location.origin + "/t/" + t;
-
-  function thFillSelects(){
-    const classes = Array.from(new Set(["Form 1","Form 2","Form 3","Form 4"].concat(libBooks.map(b=>b.class_name)))).sort();
-    const subjects = Array.from(new Set(DEFAULT_SUBJECTS.concat(libBooks.map(b=>b.subject)))).sort();
-    const keep = id => $(id).value;
-    const c = keep("thClass"), s2 = keep("thSubject");
-    $("thClass").innerHTML = classes.map(x=>`<option>${esc(x)}</option>`).join("");
-    $("thSubject").innerHTML = subjects.map(x=>`<option>${esc(x)}</option>`).join("");
-    if (c) $("thClass").value = c;
-    if (s2) $("thSubject").value = s2;
-  }
-  function thRenderPairs(){
-    $("thPairs").innerHTML = thPairs.length ? thPairs.map((p,i)=>
-      `<button type="button" class="btn-ghost" data-rm="${i}">${esc(p.klass)} · ${esc(p.subject)} ✕</button>`).join("")
-      : '<span class="hint">Wali wax lama darin.</span>';
-    $("thPairs").querySelectorAll("[data-rm]").forEach(b=>b.addEventListener("click", ()=>{
-      thPairs.splice(+b.dataset.rm,1); thRenderPairs();
-    }));
-  }
-  function thReset(){
-    thEditId = null; thPairs = []; $("thName").value = "";
-    $("thFormTitle").textContent = "👩‍🏫 Macallin cusub";
-    $("thSave").textContent = "🔗 Samee Link-ga Macallinka";
-    $("thCancel").classList.add("hidden"); $("thErr").classList.add("hidden");
-    thRenderPairs();
-  }
-  $("thAddPair").addEventListener("click", ()=>{
-    const klass = $("thClass").value, subject = $("thSubject").value;
-    if (!klass || !subject) return;
-    if (!thPairs.some(p=>p.klass===klass && p.subject===subject)) thPairs.push({klass, subject});
-    thRenderPairs();
-  });
-  $("thCancel").addEventListener("click", thReset);
-  $("thSave").addEventListener("click", async ()=>{
-    const err = $("thErr"); err.classList.add("hidden");
-    // haddii uu doortay laakiin aanu "Ku dar" taaban, si toos ah ugu dar
-    const klass = $("thClass").value, subject = $("thSubject").value;
-    if (!thPairs.length && klass && subject) thPairs.push({klass, subject});
-    const name = $("thName").value.trim();
-    if (!name){ err.textContent = "⚠️ Geli magaca macallinka."; err.classList.remove("hidden"); return; }
-    if (!thPairs.length){ err.textContent = "⚠️ Ku dar ugu yaraan hal fasal + maado."; err.classList.remove("hidden"); return; }
-    $("thSave").disabled = true;
-    try{
-      if (thEditId) await api("/api/teachers/"+thEditId, {method:"PUT", body: JSON.stringify({name, assignments: thPairs})});
-      else await api("/api/teachers", {method:"POST", body: JSON.stringify({name, assignments: thPairs})});
-      thReset(); await thLoad();
-    } catch(e){ err.textContent = "⚠️ " + e.message; err.classList.remove("hidden"); }
-    finally { $("thSave").disabled = false; }
-  });
-
-  async function thCopy(text, btn){
-    try{ await navigator.clipboard.writeText(text); }
-    catch(e){ const i = document.createElement("input"); i.value = text; document.body.appendChild(i); i.select(); document.execCommand("copy"); i.remove(); }
-    const old = btn.textContent; btn.textContent = "✅ La koobiyay"; setTimeout(()=>btn.textContent = old, 1500);
-  }
-
-  async function thLoad(){
-    thFillSelects(); if (!thEditId) thRenderPairs();
-    const el = $("thList");
-    try{
-      thRows = await api("/api/teachers");
-      if (!thRows.length){ el.textContent = "Wali macallin lama darin."; return; }
-      el.innerHTML = thRows.map(t=>`<div class="lesson" style="${t.active?'':'opacity:.6;'}">
-        <div class="lesson-top"><b>${esc(t.name)}</b>${t.active?'':' <span class="hint">(la damiyay)</span>'}
-          <span class="hint" style="margin-left:auto;">${t.plans} lesson plan</span></div>
-        <div class="lib-chips" style="margin:0 0 8px;">${(t.assignments||[]).map(a=>`<span class="bloom-tag" style="display:inline-block;font-size:.74rem;">${esc(a.klass)} · ${esc(a.subject)}</span>`).join("")}</div>
-        <input readonly value="${esc(thLink(t.token))}" onclick="this.select()" style="font-size:.78rem;margin-bottom:8px;">
-        <div class="actions" style="flex-wrap:wrap;">
-          <button class="btn-ghost" data-cp="${t.id}">📋 Koobi link-ga</button>
-          <button class="btn-ghost" data-ed="${t.id}">✏️ Wax ka beddel</button>
-          <button class="btn-ghost" data-tg="${t.id}">${t.active?'⏸ Dami':'▶️ Daar'}</button>
-          <button class="btn-ghost" data-rg="${t.id}">🔄 Link cusub</button>
-          <button class="btn-ghost" data-dl="${t.id}" style="color:var(--bad);">🗑️</button>
-        </div></div>`).join("");
-      const byId = id => thRows.find(x=>x.id===id);
-      el.querySelectorAll("[data-cp]").forEach(b=>b.addEventListener("click", ()=>thCopy(thLink(byId(b.dataset.cp).token), b)));
-      el.querySelectorAll("[data-ed]").forEach(b=>b.addEventListener("click", ()=>{
-        const t = byId(b.dataset.ed); thEditId = t.id; thPairs = (t.assignments||[]).map(a=>({klass:a.klass, subject:a.subject}));
-        $("thName").value = t.name; $("thFormTitle").textContent = "✏️ Wax ka beddel: " + t.name;
-        $("thSave").textContent = "💾 Keydi isbeddelka"; $("thCancel").classList.remove("hidden");
-        thRenderPairs(); $("thName").scrollIntoView({behavior:"smooth"});
-      }));
-      el.querySelectorAll("[data-tg]").forEach(b=>b.addEventListener("click", async ()=>{
-        const t = byId(b.dataset.tg);
-        await api("/api/teachers/"+t.id, {method:"PUT", body: JSON.stringify({active: !t.active})}); thLoad();
-      }));
-      el.querySelectorAll("[data-rg]").forEach(b=>b.addEventListener("click", async ()=>{
-        if (!confirm("Link-ga hore wuu shaqayn waayayaa. Ma samaynaa link cusub?")) return;
-        await api("/api/teachers/"+b.dataset.rg, {method:"PUT", body: JSON.stringify({regenerate:true})}); thLoad();
-      }));
-      el.querySelectorAll("[data-dl]").forEach(b=>b.addEventListener("click", async ()=>{
-        if (!confirm("Ma hubtaa inaad tirtirto macallinkan? Link-giisa wuu shaqayn waayayaa.")) return;
-        await api("/api/teachers/"+b.dataset.dl, {method:"DELETE"}); thLoad();
-      }));
-    } catch(e){ el.textContent = "⚠️ Khalad soo dejin ah."; }
-  }
-
-  boot();
-})();
-</script>
-</body>
-</html>
+  function mGroups(){const m=new Map();M.students.forEach(s=>{const k=mKey(s.school,s.cls);if(!m.has(k))m.set(k,{key:k,school:s.school||"",cls:s.cls||"",list:[]});m.get(k).list.push(s);});return [...m.values()];}
+  const mSchools=()=>[...new Set(M.students.map(s=>s.school||""))];
+  const mSchName=x=>x||mNoSch;
+  // ---- blocks ----
+  function mKpi(D,nSch){return `<div class="kpis">${nSch!=null?`<div class="kpi"><b>${nSch}</b><span>Dugsiyo</span></div>`:""}<div class="kpi"><b>${D.st.length}</b><span>Arday</span></div><div class="kpi"><b>${f1(D.cls)}</b><span>Celceliska</span></div><div class="kpi"><b>${D.pr==null?"–":Math.round(D.pr*100)+"%"}</b><span>Gudbay</span></div><div class="kpi"><b>${D.best?esc(D.best.name):"–"}</b><span>Maadada ugu fiican (${D.best?f1(D.best.avg):"–"})</span></div><div class="kpi"><b>${D.worst?esc(D.worst.name):"–"}</b><span>Maadada ugu liidata (${D.worst?f1(D.worst.avg):"–"})</span></div></div>`;}
+  function mSubj(D){
+    if(!D.ws.length)return `<div class="rtxt">Weli dhibco lama gelin.</div>`;
+    return `<h2>📚 Falanqaynta Maaddooyinka</h2><div class="rscroll"><table class="rtbl"><tr><th class="l">Maaddada</th><th>Arday</th><th>Celcelis</th><th>Ugu sarreeya</th><th>Ugu hooseeya</th><th>% Gudbay</th><th>Dhacay</th><th>Boos</th></tr>`+
+      D.ws.map(x=>`<tr><td class="l"><b>${esc(x.name)}</b></td><td>${x.n}</td><td class="${x.avg<M.pass?"bad":""}">${f1(x.avg)}</td><td>${x.max}</td><td>${x.min}</td><td>${Math.round(x.pass*100)}%</td><td>${x.fail}</td><td>${x.rank}</td></tr>`).join("")+`</table></div>`+
+      `<div class="ex-sub">Boqolkiiba ardayda gudbay</div>`+hbar(D.ws.map(x=>({l:x.name,v:x.pass*100,c:"#f2a900"})),100,v=>Math.round(v)+"%");}
+  const mHead=(a,b)=>`<tr><th>#</th><th>ID</th><th class="l">Dugsiga</th><th>Fasalka</th><th class="l">Magaca Ardayga</th><th>Wadarta</th><th>Celcelis</th><th>Heer</th><th>${a}</th><th>${b}</th></tr>`;
+  const mRow=(s,i)=>`<tr><td>${i}</td><td>${esc(s.id)}</td><td class="l">${esc(mSchName(s.school))}</td><td>${esc(s.cls)}</td><td class="l">${esc(s.name)}</td><td>${s.total}</td><td class="${s.avg<M.pass?"bad":""}">${f1(s.avg)}</td><td style="font-weight:700;color:${gcol(s.grade)}">${s.grade}</td><td>${s.rank}</td><td>${s.grank}/${s.gof}</td></tr>`;
+  function mGradeBars(D){const gs=["A","B","C","D","F"];return `<div class="ex-sub">Qaybinta heerarka</div>`+hbar(gs.map(g=>({l:g+(g==="F"?" (Hoose)":g==="D"?" (Gudbay)":""),v:D.st.filter(s=>s.grade===g).length,c:gcol(g)})),Math.max(1,D.st.length),v=>String(v));}
+  function mTop(D,n,a,b){const S=[...D.st].sort((x,y)=>x.rank-y.rank).slice(0,n);
+    return `<div class="ex-sub">${n}-ka ugu sarreeya</div><div class="rscroll"><table class="rtbl">${mHead(a,b)}${S.map((s,i)=>mRow(s,i+1)).join("")}</table></div>`;}
+  function mSum(D,what){if(!D.st.length)return "";const risk=D.st.filter(s=>s.low>0).length,weak=D.ws.filter(x=>x.avg<M.pass).map(x=>x.name);
+    return `<div class="rtxt">${what} wuxuu leeyahay <b>${D.st.length}</b> arday, celcelis ahaan <b>${f1(D.cls)}</b>. Maaddada ugu fiican waa <span class="good">${esc(D.best.name)}</span> (${f1(D.best.avg)}), tan ugu liidata waa <span class="bad">${esc(D.worst.name)}</span> (${f1(D.worst.avg)}). ${weak.length?`Maaddooyinka ka hooseeya pass mark: ${esc(weak.join(", "))}.`:"Dhammaan maaddooyinka waa ka sarreeyaan pass mark."} <b>${risk}</b> arday ayaa ka hooseeya ${M.pass}% ugu yaraan hal maaddo.</div>`;}
+  const mPrintBar=`<div class="actions no-print"><button class="btn-ghost" id="mPrintBtn" type="button">🖨️ Daabac / Save PDF</button></div>`;
+  // ---- views ----
+  function mViewSchools(){
+    const G=mGroups();
+    if(!G.length)return `<div class="card"><div class="rtxt">Weli dugsi lama darin. Kor ka geli magaca dugsiga + fasalka, kadibna soo geli Excel-ka natiijadiisa.</div></div>`;
+    const Rw=G.map(g=>({g,D:mCalc(g.list)}));
+    Rw.forEach(r=>{r.rk=Rw.filter(x=>(x.D.cls||0)>(r.D.cls||0)).length+1;});
+    return `<div class="card"><h2>🏫 Dugsiyada la geliyay (${G.length})</h2><div class="rscroll"><table class="rtbl"><tr><th>Boos</th><th class="l">Dugsiga</th><th>Fasalka</th><th>Arday</th><th>Celcelis</th><th>% Gudbay</th><th>Ugu sarreeya</th><th>Ugu hooseeya</th><th></th></tr>`+
+      [...Rw].sort((a,b)=>a.rk-b.rk).map(r=>{const D=r.D,av=D.st.map(s=>s.avg);
+        return `<tr><td>${r.rk}</td><td class="l"><b>${esc(mSchName(r.g.school))}</b></td><td>${esc(r.g.cls)}</td><td>${D.st.length}</td><td class="${D.cls!=null&&D.cls<M.pass?"bad":""}">${f1(D.cls)}</td><td>${D.pr==null?"–":Math.round(D.pr*100)+"%"}</td><td>${av.length?f1(Math.max(...av)):"–"}</td><td>${av.length?f1(Math.min(...av)):"–"}</td><td style="white-space:nowrap"><button class="btn-ghost" data-mview="${esc(r.g.school)}" type="button" style="padding:3px 8px" title="Fur dugsigan">👁</button> <button class="btn-ghost" data-mdel="${esc(r.g.key)}" type="button" style="padding:3px 8px" title="Ka saar">✕</button></td></tr>`;}).join("")+
+      `</table></div><div class="ex-sub">Celceliska dugsi-dugsi</div>`+hbar(Rw.map(r=>({l:mSchName(r.g.school)+" · "+r.g.cls,v:r.D.cls||0,c:"#1e4fa3"})),100)+`</div>`;}
+  function mViewAll(){
+    if(!M.students.length)return `<div class="card"><div class="rtxt">Weli xog lama gelin.</div></div>`;
+    const D=mCalc(M.students);
+    return `<div class="card" id="mRep">${mPrintBar}<h2 style="text-align:center">NATIIJADA ISKU-DARSAN – DHAMMAAN DUGSIYADA${M.name?" – "+esc(M.name):""}</h2><div class="sub" style="text-align:center">Golaha Horumarinta Dugsiyada Dadweynaha (GHDD)</div>${mKpi(D,mSchools().length)}${mSum(D,"Dhammaan dugsiyadu isku-darsan")}${mSubj(D)}${mGradeBars(D)}${mTop(D,10,"Boos guud","Boos dugsi")}</div>`;}
+  function mViewOne(){
+    const sc=mSchools();
+    if(!sc.length)return `<div class="card"><div class="rtxt">Weli dugsi lama darin.</div></div>`;
+    if(!sc.includes(mFilter))mFilter=sc[0];
+    const L=M.students.filter(s=>(s.school||"")===mFilter),D=mCalc(L);
+    return `<div class="card no-print"><label>Dooro dugsiga</label><select id="mFSel">${sc.map(x=>`<option value="${esc(x)}"${x===mFilter?" selected":""}>${esc(mSchName(x))}</option>`).join("")}</select></div>`+
+      `<div class="card" id="mRep">${mPrintBar}<h2 style="text-align:center">NATIIJADA DUGSIGA: ${esc(mSchName(mFilter))}${M.name?" – "+esc(M.name):""}</h2><div class="sub" style="text-align:center">Fasalada: ${esc([...new Set(L.map(s=>s.cls))].join(", "))||"–"}</div>${mKpi(D)}${mSum(D,"Dugsigan")}${mSubj(D)}${mGradeBars(D)}`+
+      `<div class="ex-sub">Dhammaan ardayda dugsigan</div><div class="rscroll"><table class="rtbl">${mHead("Boos dugsi","Boos fasal")}${[...D.st].sort((a,b)=>a.rank-b.rank).map((s,i)=>mRow(s,i+1)).join("")}</table></div></div>`;}
+  function mViewStu(){
+    if(!M.students.length)return `<div class="card"><div class="rtxt">Weli xog lama gelin.</div></div>`;
+    const sc=mSchools();if(mFilter&&!sc.includes(mFilter))mFilter="";
+    mDall=mCalc(M.students);
+    return `<div class="card"><div class="row"><div><label>Raadi (ID, magac, dugsi, fasal)</label><input id="mQ" value="${esc(mQ)}" placeholder="tusaale: 1001 ama Cabdi"></div><div><label>Dugsiga</label><select id="mFSel"><option value="">— Dhammaan dugsiyada —</option>${sc.map(x=>`<option value="${esc(x)}"${x===mFilter?" selected":""}>${esc(mSchName(x))}</option>`).join("")}</select></div></div><div class="status" id="mArCount"></div><div class="rscroll"><table class="rtbl"><thead>${mHead("Boos guud","Boos dugsi")}</thead><tbody id="mArBody"></tbody></table></div></div>`;}
+  function mArFill(){if(!mDall||!$("mArBody"))return;let L=[...mDall.st].sort((a,b)=>a.rank-b.rank);
+    if(mFilter)L=L.filter(s=>(s.school||"")===mFilter);
+    const q=mQ.trim().toLowerCase();if(q)L=L.filter(s=>(s.id+" "+s.name+" "+s.school+" "+s.cls).toLowerCase().includes(q));
+    $("mArBody").innerHTML=L.slice(0,300).map((s,i)=>mRow(s,i+1)).join("");
+    $("mArCount").textContent=L.length+" arday"+(L.length>300?" – 300-ka ugu horreeya ayaa la tusay, raadi si aad u dhimto.":"");}
+  function mBodyRender(){const b=$("mBody");
+    if(mView==="isku")b.innerHTML=mViewAll();else if(mView==="dugsi")b.innerHTML=mViewOne();else if(mView==="arday"){b.innerHTML=mViewStu();mArFill();}else b.innerHTML=mViewSchools();}
+  function mRender(){mLinkRender();
+    document.querySelectorAll("#mViews button").forEach(x=>x.classList.toggle("on",x.dataset.v===mView));
+    $("mName").value=M.name;$("mPass").value=M.pass;$("mSubs").value=M.subjects.join(", ");mBodyRender();}
+  function mPrint(html){const w=window.open("","_blank");if(!w)return;
+    w.document.write(`<html><head><meta charset="utf-8"><title>Natiijada Dugsiyada</title><style>body{font-family:Arial,sans-serif;margin:18px;color:#111}h2{font-size:16px}.kpis{display:flex;gap:8px;flex-wrap:wrap}.kpi{border:1px solid #ccc;border-radius:8px;padding:8px;text-align:center;min-width:110px}.kpi b{display:block;color:#1e4fa3}.kpi span{font-size:11px;color:#555}table{border-collapse:collapse;width:100%;font-size:11px}th,td{border:1px solid #bbb;padding:3px 5px;text-align:center}.l{text-align:left}.rtxt{font-size:12px;line-height:1.5;margin:5px 0}.ex-sub{font-weight:700;margin:12px 0 4px}svg{max-width:560px}.good{color:#1e8e5a;font-weight:700}.bad{color:#c0392b;font-weight:700}.sub{font-size:12px;color:#555}.no-print{display:none}</style></head><body>${html}</body></html>`);
+    w.document.close();setTimeout(()=>w.print(),400);}
+  // ---- gelinta xogta (Excel / ku dheji) ----
+  function mIngest(rows,school,cls){
+    const hi=rows.findIndex(r=>r.filter(c=>String(c).trim()!=="").length>=3);if(hi<0)throw new Error("Header-ka lama helin (ugu yaraan 3 tiir: ID, Magac, maaddo).");
+    const H=rows[hi].map(c=>String(c).trim());
+    const idRe=/(^id$|\bid\b|lambar|admission)/i,skipRe=/^(wadarta|total|celcelis|average|avg|heer|grade|boos|rank|#|sn|s\/n|jinsi|gender|fasal|class|dugsi|school|natiijo|result|%)/i;
+    const ci=H.findIndex(h=>idRe.test(h));let cn=H.findIndex((h,i)=>i!==ci&&/(magac|name|arday|student)/i.test(h));
+    if(cn<0)cn=H.findIndex((h,i)=>i!==ci&&h!=="");
+    const sc=H.map((h,i)=>i).filter(i=>i!==ci&&i!==cn&&H[i]!==""&&!skipRe.test(H[i]));
+    if(!sc.length)throw new Error("Maaddooyin lama helin. Tiirarka kale waa inay yeeshaan magac maaddo.");
+    let bad=0;const st=[];
+    rows.slice(hi+1).forEach(r=>{const name=String(r[cn]==null?"":r[cn]).trim(),id=ci>=0?String(r[ci]==null?"":r[ci]).trim():"";
+      const sv=sc.map(i=>{const v=r[i];if(v===""||v==null)return "";const n=+v;if(isNaN(n)||n<0||n>100){bad++;return "";}return String(n);});
+      if(!name&&!id&&sv.every(x=>x===""))return;st.push({name,id,sv});});
+    if(!st.length)throw new Error("Arday lama helin.");
+    const ex=M.students.find(s=>(s.school||"").toLowerCase()===school.toLowerCase());if(ex)school=ex.school;
+    const key=mKey(school,cls),rest=M.students.filter(s=>mKey(s.school,s.cls)!==key),replaced=M.students.length-rest.length;
+    if(rest.length+st.length>5000)throw new Error("Wadarta ardayda way ka badan tahay 5000.");
+    const names=sc.map(i=>H[i]),newN=names.filter(nm=>!M.subjects.some(x=>x.toLowerCase()===nm.toLowerCase()));
+    if(M.subjects.length+new Set(newN.map(x=>x.toLowerCase())).size>20)throw new Error("Wadarta maaddooyinka way ka badan tahay 20.");
+    M.students=rest;
+    const idx=names.map(nm=>{let k=M.subjects.findIndex(x=>x.toLowerCase()===nm.toLowerCase());if(k<0){M.subjects.push(nm);M.students.forEach(s=>s.s.push(""));k=M.subjects.length-1;}return k;});
+    st.forEach(x=>{const s=M.subjects.map(()=>"");x.sv.forEach((v,j)=>{s[idx[j]]=v;});M.students.push({school,cls,id:x.id,name:x.name,s});});
+    const noId=st.filter(x=>!x.id).length,seen={},dup=new Set();st.forEach(x=>{const k=x.id.toLowerCase();if(!k)return;if(seen[k])dup.add(x.id);seen[k]=1;});
+    const other=new Set(M.students.filter(s=>mKey(s.school,s.cls)!==key).map(s=>s.id.toLowerCase()));const cross=st.filter(x=>x.id&&other.has(x.id.toLowerCase())).length;
+    return {n:st.length,subs:names.length,bad,noId,dup:[...dup],replaced,cross,noIdCol:ci<0,school};}
+  function mIngestMsg(r,cls){return "✅ "+r.school+" · "+cls+": "+r.n+" arday iyo "+r.subs+" maaddo waa la soo geliyay"+(r.replaced?" (xogtii hore ee dugsigan+fasalkan waa la bedelay)":"")+". Taabo <b>⚙️ Samee Natiijo</b> si aad u keydiso oo link u samayso."+
+    (r.noIdCol?"<br>⚠️ Tiir ID ah lama helin – ardayda link-ga kuma arki karaan natiijada.":r.noId?"<br>⚠️ "+r.noId+" arday ID ma lahan.":"")+
+    (r.dup.length?"<br>⚠️ ID soo noqnoqday isla dugsigan: "+esc(r.dup.slice(0,10).join(", ")):"")+
+    (r.cross?"<br>ℹ️ "+r.cross+" ID ayaa dugsiyo kale sidoo kale ku jira – ardaygu wuxuu dooran doonaa dugsigiisa marka uu raadinayo.":"")+
+    (r.bad?"<br>⚠️ "+r.bad+" dhibic oo aan sax ahayn (0–100 ma aha) waa la ka tagay.":"");}
+  function mGetSchool(){const school=$("mSchool").value.trim(),cls=$("mCls").value.trim();
+    if(!school)throw new Error("Marka hore geli magaca dugsiga.");if(!cls)throw new Error("Marka hore geli fasalka.");return {school,cls};}
+  $("mXlsBtn").addEventListener("click",()=>{try{mGetSchool();$("mXlsFile").click();}catch(err){$("mStatus").textContent="❌ "+err.message;}});
+  $("mXlsFile").addEventListener("change",async()=>{const f=$("mXlsFile").files[0];$("mXlsFile").value="";if(!f)return;
+    try{const {school,cls}=mGetSchool();$("mStatus").textContent="⏳ Excel waa la akhrinayaa...";await loadScript(XLSX_URL);
+      const wb=XLSX.read(await f.arrayBuffer(),{type:"array"});
+      const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,defval:"",raw:true});
+      const r=mIngest(rows,school,cls);$("mSchool").value="";mView="dugsiyo";mRender();$("mStatus").innerHTML=mIngestMsg(r,cls);
+    }catch(err){$("mStatus").textContent="❌ "+err.message;}});
+  $("mPasteBtn").addEventListener("click",()=>$("mPasteBox").classList.toggle("hidden"));
+  $("mPasteGo").addEventListener("click",()=>{try{const {school,cls}=mGetSchool();
+      const rows=$("mPaste").value.split(/\r?\n/).filter(l=>l.trim()).map(l=>l.indexOf("\t")>=0?l.split("\t"):l.split(/[;,]/));
+      const r=mIngest(rows,school,cls);$("mPaste").value="";$("mSchool").value="";$("mPasteBox").classList.add("hidden");mView="dugsiyo";mRender();$("mStatus").innerHTML=mIngestMsg(r,cls);
+    }catch(err){$("mStatus").textContent="❌ "+err.message;}});
+  $("mTplBtn").addEventListener("click",async()=>{try{await loadScript(XLSX_URL);const sb=M.subjects.length?M.subjects:DEFAULT_SUBJECTS;
+    const ws=XLSX.utils.aoa_to_sheet([["ID","Magac",...sb],["1001","Magac Arday",...sb.map(()=>"")],["1002","Magac Arday",...sb.map(()=>"")]]);
+    ws["!cols"]=[{wch:12},{wch:28},...sb.map(()=>({wch:14}))];
+    const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"Natiijo");XLSX.writeFile(wb,"Template-Natiijo-Dugsi.xlsx");
+  }catch(err){$("mStatus").textContent="❌ "+err.message;}});
+  // ---- events ----
+  $("mViews").addEventListener("click",e=>{const v=e.target.dataset&&e.target.dataset.v;if(v){mView=v;mRender();}});
+  $("mName").addEventListener("input",()=>{M.name=$("mName").value;});
+  $("mPass").addEventListener("input",()=>{M.pass=Number($("mPass").value)||50;mBodyRender();});
+  $("mBody").addEventListener("click",e=>{const t=e.target;if(!t||!t.dataset)return;
+    if(t.dataset.mview!=null){mFilter=t.dataset.mview;mView="dugsi";mRender();window.scrollTo(0,0);}
+    else if(t.dataset.mdel!=null){if(!confirm("Ma ka saartaa dugsigan+fasalkan xogta?"))return;const k=t.dataset.mdel;M.students=M.students.filter(s=>mKey(s.school,s.cls)!==k);mRender();$("mStatus").textContent="Waa la saaray. Taabo ⚙️ Samee Natiijo si loo keydiyo.";}
+    else if(t.id==="mPrintBtn"&&$("mRep")){const c=$("mRep").cloneNode(true);c.querySelectorAll(".no-print").forEach(x=>x.remove());mPrint(c.innerHTML);}});
+  $("mBody").addEventListener("input",e=>{if(e.target.id==="mQ"){mQ=e.target.value;mArFill();}});
+  $("mBody").addEventListener("change",e=>{if(e.target.id==="mFSel"){mFilter=e.target.value;if(mView==="arday")mArFill();else mBodyRender();}});
+  $("mNewBtn").addEventListener("click",()=>{mNew();$("mSaved").value="";mRender();$("mStatus").textContent="";});
+  async function mSave(){M.name=$("mName").value||M.name||"Natiijo Dugsiyo – "+new Date().toLocaleDateString("en-GB");
+    const j=await api("/api/results",{method:"POST",body:JSON.stringify({id:M.id,multi:true,name:M.name,subjects:M.subjects,students:M.students,pass:M.pass})});
+    M.id=j.id;await mList(M.id);return j;}
+  $("mSaveBtn").addEventListener("click",async()=>{try{await mSave();$("mStatus").textContent="✅ Waa la keydiyay.";}catch(err){$("mStatus").textContent="❌ "+err.message;}});
+  $("mMakeBtn").addEventListener("click",async()=>{try{
+      const D=mCalc(M.students);if(!D.st.length)throw new Error("Marka hore soo geli natiijada dugsi ama ka badan.");
+      $("mStatus").textContent="⏳ Natiijada waa la samaynayaa...";
+      await mSave();await mPublish(true,false);mView="isku";mRender();
+      const noId=M.students.filter(x=>!x.id).length;
+      $("mStatus").innerHTML="✅ Natiijada waa la isku daray, la keydiyay, link-ga ardayduna waa diyaar."+(noId?"<br>⚠️ "+noId+" arday ID ma lahan.":"");
+    }catch(err){$("mStatus").textContent="❌ "+err.message;}});
+  $("mDelBtn").addEventListener("click",async()=>{if(!M.id||!confi
