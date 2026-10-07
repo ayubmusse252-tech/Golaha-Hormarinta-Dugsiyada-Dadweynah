@@ -1,6 +1,7 @@
 import express from "express";
 import pkg from "pg";
 import crypto from "crypto";
+import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -13,64 +14,41 @@ app.use(express.json({ limit: "25mb" })); // raise limit: OCR requests carry pag
 // ---------- Database ----------
 if (!process.env.DATABASE_URL) {
   console.warn(
-    "⚠️  DATABASE_URL lama helin. Ku dar Postgres plugin Railway-ga oo ku xidh variable-ka DATABASE_URL adeeggan."
+    "⚠️ DATABASE_URL lama helin. Ku dar Postgres plugin Railway-ga oo ku xidh variable-ka DATABASE_URL adeeggan."
   );
 }
 if (!process.env.ANTHROPIC_API_KEY && !process.env.GEMINI_API_KEY) {
   console.warn(
-    "⚠️  Midna ANTHROPIC_API_KEY ama GEMINI_API_KEY lama helin. Ku dar ugu yaraan mid Variables-ka Railway si samaynta imtixaanka iyo OCR-ku ay u shaqeeyaan."
+    "⚠️ Midna ANTHROPIC_API_KEY ama GEMINI_API_KEY lama helin. Ku dar ugu yaraan mid Variables-ka Railway si samaynta imtixaanka iyo OCR-ku ay u shaqeeyaan."
   );
 }
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL && process.env.DATABASE_URL.includes("railway")
-    ? { rejectUnauthorized: false }
-    : false,
+  ssl:
+    process.env.DATABASE_URL && process.env.DATABASE_URL.includes("railway")
+      ? { rejectUnauthorized: false }
+      : false,
 });
 
 async function initDb() {
-  await pool.query(`CREATE TABLE IF NOT EXISTS exams (
-    id TEXT PRIMARY KEY,
-    subject TEXT NOT NULL DEFAULT '',
-    class_name TEXT NOT NULL DEFAULT '',
-    total_marks INT NOT NULL DEFAULT 0,
-    duration TEXT DEFAULT '',
-    sources TEXT DEFAULT '',
-    data JSONB NOT NULL DEFAULT '{}',
-    created_at TIMESTAMPTZ DEFAULT now()
-  )`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS exams ( id TEXT PRIMARY KEY, subject TEXT NOT NULL DEFAULT '', class_name TEXT NOT NULL DEFAULT '', total_marks INT NOT NULL DEFAULT 0, duration TEXT DEFAULT '', sources TEXT DEFAULT '', data JSONB NOT NULL DEFAULT '{}', created_at TIMESTAMPTZ DEFAULT now() )`);
   // OCR cache: boggag kasta (buug + bog) mar keliya ayaa la akhriyaa, kadibna waa la keydiyaa.
-  await pool.query(`CREATE TABLE IF NOT EXISTS ocr_pages (
-    doc_hash TEXT NOT NULL,
-    page INT NOT NULL,
-    doc_name TEXT NOT NULL DEFAULT '',
-    text TEXT NOT NULL DEFAULT '',
-    created_at TIMESTAMPTZ DEFAULT now(),
-    PRIMARY KEY (doc_hash, page)
-  )`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS ocr_pages ( doc_hash TEXT NOT NULL, page INT NOT NULL, doc_name TEXT NOT NULL DEFAULT '', text TEXT NOT NULL DEFAULT '', created_at TIMESTAMPTZ DEFAULT now(), PRIMARY KEY (doc_hash, page) )`);
   // Kharashka API: call kasta waa la diiwaangeliyaa (token + doolar)
-  await pool.query(`CREATE TABLE IF NOT EXISTS api_usage (
-    id SERIAL PRIMARY KEY,
-    model TEXT NOT NULL DEFAULT '',
-    label TEXT NOT NULL DEFAULT '',
-    input_tokens INT NOT NULL DEFAULT 0,
-    output_tokens INT NOT NULL DEFAULT 0,
-    cost_usd NUMERIC(12,6) NOT NULL DEFAULT 0,
-    created_at TIMESTAMPTZ DEFAULT now()
-  )`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS api_usage ( id SERIAL PRIMARY KEY, model TEXT NOT NULL DEFAULT '', label TEXT NOT NULL DEFAULT '', input_tokens INT NOT NULL DEFAULT 0, output_tokens INT NOT NULL DEFAULT 0, cost_usd NUMERIC(12,6) NOT NULL DEFAULT 0, created_at TIMESTAMPTZ DEFAULT now() )`);
   // Natiijooyinka ardayda (Form 4): xog dhammaystiran oo JSON ah
-  await pool.query(`CREATE TABLE IF NOT EXISTS result_sets (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL DEFAULT '',
-    class_name TEXT NOT NULL DEFAULT 'Form 4',
-    data JSONB NOT NULL DEFAULT '{}',
-    updated_at TIMESTAMPTZ DEFAULT now()
-  )`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS result_sets ( id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', class_name TEXT NOT NULL DEFAULT 'Form 4', data JSONB NOT NULL DEFAULT '{}', updated_at TIMESTAMPTZ DEFAULT now() )`);
   // Link-ga ardayda: token gaar ah + ma la daabacay (published)
-  await pool.query(`ALTER TABLE result_sets ADD COLUMN IF NOT EXISTS public_token TEXT`);
-  await pool.query(`ALTER TABLE result_sets ADD COLUMN IF NOT EXISTS published BOOLEAN NOT NULL DEFAULT false`);
-  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS result_sets_public_token_idx ON result_sets (public_token) WHERE public_token IS NOT NULL`);
+  await pool.query(
+    `ALTER TABLE result_sets ADD COLUMN IF NOT EXISTS public_token TEXT`
+  );
+  await pool.query(
+    `ALTER TABLE result_sets ADD COLUMN IF NOT EXISTS published BOOLEAN NOT NULL DEFAULT false`
+  );
+  await pool.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS result_sets_public_token_idx ON result_sets (public_token) WHERE public_token IS NOT NULL`
+  );
   console.log("✅ Database ready");
 }
 initDb().catch((e) => console.error("DB init error:", e));
@@ -78,7 +56,9 @@ initDb().catch((e) => console.error("DB init error:", e));
 // ---------- Admin auth (same pattern as the evaluation app) ----------
 function requireAdmin(req, res, next) {
   if (!process.env.ADMIN_PASSWORD) {
-    return res.status(500).json({ error: "ADMIN_PASSWORD lama dejin server-ka." });
+    return res
+      .status(500)
+      .json({ error: "ADMIN_PASSWORD lama dejin server-ka." });
   }
   const pw = req.header("x-admin-password");
   if (pw !== process.env.ADMIN_PASSWORD) {
@@ -90,7 +70,9 @@ function requireAdmin(req, res, next) {
 app.post("/api/login", (req, res) => {
   const { password } = req.body || {};
   if (!process.env.ADMIN_PASSWORD) {
-    return res.status(500).json({ ok: false, error: "ADMIN_PASSWORD lama dejin server-ka." });
+    return res
+      .status(500)
+      .json({ ok: false, error: "ADMIN_PASSWORD lama dejin server-ka." });
   }
   if (password === process.env.ADMIN_PASSWORD) return res.json({ ok: true });
   res.status(401).json({ ok: false });
@@ -101,7 +83,9 @@ app.post("/api/login", (req, res) => {
 const CREDIT_START = parseFloat(process.env.CREDIT_START_USD || "5");
 // Gemini bilaash (Google AI Studio free tier) = kharash 0. Haddii Google project-kaagu leeyahay billing, deji GEMINI_FREE_TIER=0
 const GEMINI_FREE = process.env.GEMINI_FREE_TIER !== "0";
-const GEMINI_BASE = process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta";
+const GEMINI_BASE =
+  process.env.GEMINI_BASE_URL ||
+  "https://generativelanguage.googleapis.com/v1beta";
 const numEnv = (v, d) => {
   const n = parseFloat(v);
   return isNaN(n) ? d : n;
@@ -143,7 +127,10 @@ const AI_CHOICES = {
   },
 };
 
-const keyAvailable = (c) => (c.provider === "gemini" ? !!process.env.GEMINI_API_KEY : !!process.env.ANTHROPIC_API_KEY);
+const keyAvailable = (c) =>
+  c.provider === "gemini"
+    ? !!process.env.GEMINI_API_KEY
+    : !!process.env.ANTHROPIC_API_KEY;
 
 // Doorashada hore (haddii aan la keydin): Gemini haddii key-giisa jiro, haddii kale Claude.
 let currentChoice = AI_CHOICES[process.env.AI_DEFAULT]
@@ -153,8 +140,12 @@ let currentChoice = AI_CHOICES[process.env.AI_DEFAULT]
   : "claude-sonnet";
 
 async function loadAiChoice() {
-  await pool.query(`CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '')`);
-  const r = await pool.query("SELECT value FROM app_settings WHERE key='ai_choice'");
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '')`
+  );
+  const r = await pool.query(
+    "SELECT value FROM app_settings WHERE key='ai_choice'"
+  );
   if (r.rows[0] && AI_CHOICES[r.rows[0].value]) currentChoice = r.rows[0].value;
   console.log("🤖 AI-ga la isticmaalayo:", currentChoice);
 }
@@ -180,7 +171,9 @@ app.post("/api/ai-choice", requireAdmin, async (req, res) => {
   if (!c) return res.status(400).json({ error: "doorasho aan jirin" });
   if (!keyAvailable(c)) {
     const k = c.provider === "gemini" ? "GEMINI_API_KEY" : "ANTHROPIC_API_KEY";
-    return res.status(400).json({ error: `${k} lama dejin Variables-ka Railway.` });
+    return res
+      .status(400)
+      .json({ error: `${k} lama dejin Variables-ka Railway.` });
   }
   currentChoice = id;
   try {
@@ -209,12 +202,7 @@ async function recordUsage(c, inT, outT, label) {
 
 app.get("/api/usage", requireAdmin, async (req, res) => {
   try {
-    const tot = await pool.query(`SELECT
-        COALESCE(SUM(cost_usd) FILTER (WHERE model LIKE 'claude%'),0)::float AS claude_spent,
-        COUNT(*) FILTER (WHERE model LIKE 'claude%')::int AS claude_calls,
-        COALESCE(SUM(cost_usd) FILTER (WHERE model NOT LIKE 'claude%'),0)::float AS gemini_cost,
-        COUNT(*) FILTER (WHERE model NOT LIKE 'claude%')::int AS gemini_calls
-      FROM api_usage`);
+    const tot = await pool.query(`SELECT COALESCE(SUM(cost_usd) FILTER (WHERE model LIKE 'claude%'),0)::float AS claude_spent, COUNT(*) FILTER (WHERE model LIKE 'claude%')::int AS claude_calls, COALESCE(SUM(cost_usd) FILTER (WHERE model NOT LIKE 'claude%'),0)::float AS gemini_cost, COUNT(*) FILTER (WHERE model NOT LIKE 'claude%')::int AS gemini_calls FROM api_usage`);
     const last = await pool.query(
       "SELECT model, label, input_tokens, output_tokens, cost_usd::float AS cost, created_at FROM api_usage ORDER BY id DESC LIMIT 10"
     );
@@ -258,11 +246,15 @@ function makeGate(max) {
       next();
     });
 }
-const geminiGate = makeGate(Math.max(1, parseInt(process.env.GEMINI_CONCURRENCY || "3", 10)));
+const geminiGate = makeGate(
+  Math.max(1, parseInt(process.env.GEMINI_CONCURRENCY || "3", 10))
+);
 
 function retryDelayMs(data) {
   try {
-    const d = ((data && data.error && data.error.details) || []).find((x) => x && x.retryDelay);
+    const d = ((data && data.error && data.error.details) || []).find(
+      (x) => x && x.retryDelay
+    );
     if (d) return Math.ceil(parseFloat(d.retryDelay) * 1000) + 1000;
   } catch (_) {}
   return null;
@@ -282,11 +274,16 @@ async function geminiRequest(c, { system, messages, maxTokens, json }) {
         ? [{ text: m.content }]
         : m.content.map((b) =>
             b.type === "image"
-              ? { inline_data: { mime_type: b.source.media_type, data: b.source.data } }
+              ? {
+                  inline_data: {
+                    mime_type: b.source.media_type,
+                    data: b.source.data,
+                  },
+                }
               : { text: b.text }
           ),
   }));
-  const url = `${GEMINI_BASE}/models/${encodeURIComponent(c.model)}:generateContent`;
+  const url = `${GEMINI_BASE}/models/${encodeURIComponent( c.model )}:generateContent`;
   let thinkingCfg = true;
   for (let attempt = 0; attempt < 5; attempt++) {
     const gen = { maxOutputTokens: maxTokens || 4096 };
@@ -301,7 +298,9 @@ async function geminiRequest(c, { system, messages, maxTokens, json }) {
     });
     const data = await res.json().catch(() => ({}));
     if (res.ok) return data;
-    const msg = (data && data.error && data.error.message) || `Gemini error ${res.status}`;
+    const msg =
+      (data && data.error && data.error.message) ||
+      `Gemini error ${res.status}`;
     // Moodel qaar ma aqbalaan thinkingConfig — ka tag oo dib u tijaabi
     if (res.status === 400 && thinkingCfg && /think/i.test(msg)) {
       thinkingCfg = false;
@@ -311,14 +310,17 @@ async function geminiRequest(c, { system, messages, maxTokens, json }) {
     if ([429, 500, 503].includes(res.status) && attempt < 4) {
       const wait = retryDelayMs(data) || 8000 * (attempt + 1);
       if (wait <= 65000) {
-        console.warn(`[gemini] ${res.status} — dib u tijaabin ${Math.round(wait / 1000)}s kadib`);
+        console.warn(
+          `[gemini] ${res.status} — dib u tijaabin ${Math.round( wait / 1000 )}s kadib`
+        );
         await sleep(wait);
         continue;
       }
     }
     const err = new Error(
       res.status === 429
-        ? "Gemini: xadka bilaashka ah ayaa dhammaaday (daqiiqad ama maalin). Sug wax yar ama dooro AI kale. " + msg
+        ? "Gemini: xadka bilaashka ah ayaa dhammaaday (daqiiqad ama maalin). Sug wax yar ama dooro AI kale. " +
+          msg
         : msg
     );
     err.code = "upstream_error";
@@ -330,7 +332,9 @@ async function callAI({ system, messages, maxTokens, label, json }) {
   const c = AI_CHOICES[currentChoice];
 
   if (c.provider === "gemini") {
-    const data = await geminiGate(() => geminiRequest(c, { system, messages, maxTokens, json }));
+    const data = await geminiGate(() =>
+      geminiRequest(c, { system, messages, maxTokens, json })
+    );
     const cand = (data.candidates || [])[0] || {};
     const text = ((cand.content && cand.content.parts) || [])
       .filter((p) => p.text && !p.thought)
@@ -339,7 +343,10 @@ async function callAI({ system, messages, maxTokens, label, json }) {
     const um = data.usageMetadata || {};
     const inT = um.promptTokenCount || 0;
     const outT = (um.candidatesTokenCount || 0) + (um.thoughtsTokenCount || 0); // thinking waxaa lagu dallacaa soo-saar
-    const stop = cand.finishReason || (data.promptFeedback && data.promptFeedback.blockReason) || "unknown";
+    const stop =
+      cand.finishReason ||
+      (data.promptFeedback && data.promptFeedback.blockReason) ||
+      "unknown";
     console.log(`[ai] ${c.model} stop=${stop} in=${inT} out=${outT}`);
     await recordUsage(c, inT, outT, label);
     return { text, stop };
@@ -364,20 +371,30 @@ async function callAI({ system, messages, maxTokens, label, json }) {
   });
   const jsonRes = await res.json();
   if (!res.ok) {
-    const err = new Error((jsonRes && jsonRes.error && jsonRes.error.message) || "Claude API error");
+    const err = new Error(
+      (jsonRes && jsonRes.error && jsonRes.error.message) || "Claude API error"
+    );
     err.code = "upstream_error";
     throw err;
   }
-  const text = (jsonRes.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n");
+  const text = (jsonRes.content || [])
+    .filter((b) => b.type === "text")
+    .map((b) => b.text)
+    .join("\n");
   const u = jsonRes.usage || {};
-  console.log(`[ai] ${c.model} stop=${jsonRes.stop_reason} in=${u.input_tokens} out=${u.output_tokens}`);
+  console.log(
+    `[ai] ${c.model} stop=${jsonRes.stop_reason} in=${u.input_tokens} out=${u.output_tokens}`
+  );
   await recordUsage(c, u.input_tokens || 0, u.output_tokens || 0, label);
   return { text, stop: jsonRes.stop_reason };
 }
 
 function extractJson(text) {
   let t = String(text || "").trim();
-  t = t.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
+  t = t
+    .replace(/^```(?:json)?/i, "")
+    .replace(/```$/, "")
+    .trim();
   const start = t.search(/[{[]/);
   const end = Math.max(t.lastIndexOf("}"), t.lastIndexOf("]"));
   if (start === -1 || end === -1) throw new Error("no JSON found in reply");
@@ -388,22 +405,34 @@ function extractJson(text) {
 async function askJson(prompt, maxTokens, label) {
   let last = "";
   for (let attempt = 0; attempt < 2; attempt++) {
-    const r = await callAI({ messages: [{ role: "user", content: prompt }], maxTokens, label, json: true });
+    const r = await callAI({
+      messages: [{ role: "user", content: prompt }],
+      maxTokens,
+      label,
+      json: true,
+    });
     try {
       return extractJson(r.text);
     } catch (e) {
       last = r.stop;
-      console.error(`[${label}] attempt ${attempt + 1} failed (stop=${r.stop}): ${e.message}`);
+      console.error(
+        `[${label}] attempt ${attempt + 1} failed (stop=${r.stop}): ${ e.message }`
+      );
     }
   }
-  throw new Error(`Qayb ka mid ah imtixaanka (${label}) ma dhammaystirmin (${last}). Isku day mar kale.`);
+  throw new Error(
+    `Qayb ka mid ah imtixaanka (${label}) ma dhammaystirmin (${last}). Isku day mar kale.`
+  );
 }
 
 function distribute(total, count) {
   if (count <= 0) return [];
   const base = Math.floor(total / count);
   const extra = total - base * count;
-  return Array.from({ length: count }, (_, i) => base + (i >= count - extra ? 1 : 0));
+  return Array.from(
+    { length: count },
+    (_, i) => base + (i >= count - extra ? 1 : 0)
+  );
 }
 
 // Dhibcaha oo dib loo qoondeeyo: wadarta su'aalaha oo dhan = total (sax, tiro dhan).
@@ -429,7 +458,8 @@ function rebalanceMarks({ qMcq, qBlank, qMatch, qStruct, total, partAShare }) {
     qMatch.forEach((q) => (q.marks = base * pairsOf(q)));
     let rem = partA - aQs.reduce((a, q) => a + q.marks, 0);
     const pool = singles.length ? singles : qMatch;
-    for (let i = 0; rem > 0 && pool.length; i++, rem--) pool[(pool.length - 1 - (i % pool.length))].marks++;
+    for (let i = 0; rem > 0 && pool.length; i++, rem--)
+      pool[pool.length - 1 - (i % pool.length)].marks++;
   }
   if (qStruct.length) {
     const sm = distribute(total - partA, qStruct.length);
@@ -449,7 +479,10 @@ function splitText(text, n) {
   const out = [];
   let cur = "";
   for (const p of paras) {
-    if (cur.length >= target && out.length < n - 1) { out.push(cur); cur = ""; }
+    if (cur.length >= target && out.length < n - 1) {
+      out.push(cur);
+      cur = "";
+    }
     cur += (cur ? "\n\n" : "") + p;
   }
   if (cur) out.push(cur);
@@ -465,7 +498,8 @@ function detectLangShort(text) {
   const s = String(text || "");
   if (/[\u0600-\u06FF]/.test(s)) return "ar";
   const words = s.toLowerCase().match(/[a-z']+/g) || [];
-  let en = 0, so = 0;
+  let en = 0,
+    so = 0;
   for (const w of words) {
     if (STOP_EN.has(w)) en++;
     if (STOP_SO.has(w)) so++;
@@ -473,48 +507,102 @@ function detectLangShort(text) {
   return so > en ? "so" : "en";
 }
 const SUMMARY_WORD = { so: "Soo koobid", en: "Summary", ar: "الخلاصة" };
-const DEFAULT_LESSON_DURATION = { so: "40 daqiiqo", en: "40 min", ar: "40 دقيقة" };
+const DEFAULT_LESSON_DURATION = {
+  so: "40 daqiiqo",
+  en: "40 min",
+  ar: "40 دقيقة",
+};
 
-const LANG_NAMES = { so: "Somali (Af-Soomaali)", en: "English", ar: "Arabic (العربية)" };
+const LANG_NAMES = {
+  so: "Somali (Af-Soomaali)",
+  en: "English",
+  ar: "Arabic (العربية)",
+};
 
 const LABELS = {
   so: {
     aName: "QAYBTA A: Su'aalaha Gaagaaban",
-    aInstr: "Ka jawaab dhammaan qaybaha hoose. Su'aal kastaa waxay leedahay dhibcaha ka horreeya.",
+    aInstr:
+      "Ka jawaab dhammaan qaybaha hoose. Su'aal kastaa waxay leedahay dhibcaha ka horreeya.",
     mcqName: "1. Ikhtiyaar Sax ah",
     mcqInstr: "Dooro jawaabta saxda ah ee su'aal kasta.",
     blankName: "2. Buuxi Meelaha Banaan",
     blankInstr: "Ku buuxi meesha banaan ereyga ama weedha saxda ah.",
     matchName: "3. Isku Aad",
-    matchInstr: "Ku aad shayga Tiirka A ee la socda Tiirka B (ku qor lambarka saxda ah ee Tiirka A goobta Jawaab).",
-    matchPrompt: "Ku aad Tiirka A iyo Tiirka B:", colA: "Tiirka A", colB: "Tiirka B", answerWord: "Jawaab",
+    matchInstr:
+      "Ku aad shayga Tiirka A ee la socda Tiirka B (ku qor lambarka saxda ah ee Tiirka A goobta Jawaab).",
+    matchPrompt: "Ku aad Tiirka A iyo Tiirka B:",
+    colA: "Tiirka A",
+    colB: "Tiirka B",
+    answerWord: "Jawaab",
     structName: "QAYBTA B: Su'aalo Qaab-dhismeed ah",
     structInstr: "Ka jawaab dhammaan su'aalaha. Si buuxda u qor jawaabahaaga.",
-    defSubject: "Maadada", defClass: "Fasalka", defDuration: "2 saac", defSchool: "Imtixaanka Maadada",
+    defSubject: "Maadada",
+    defClass: "Fasalka",
+    defDuration: "2 saac",
+    defSchool: "Imtixaanka Maadada",
     titleTemplate: "Imtixaanka {subject} — {class}",
-    totalMarks: "Wadarta Dhibcaha", time: "Waqtiga", studentName: "Magaca Ardayga", klass: "Fasalka", date: "Taariikhda",
-    source: "Isha", marksWord: "dhibcood", answerKey: "🔑 Furaha Jawaabaha (macalinka kaliya)",
-    pageWord: "Bogga", unnamed: "Cashar aan magac lahayn", lessonWord: "Cashar",
-    bloom: { Remember: "Xusuusnaan", Understand: "Fahamka", Apply: "Dabaqid", Analyze: "Falanqayn", Evaluate: "Qiimeyn", Create: "Abuur" },
+    totalMarks: "Wadarta Dhibcaha",
+    time: "Waqtiga",
+    studentName: "Magaca Ardayga",
+    klass: "Fasalka",
+    date: "Taariikhda",
+    source: "Isha",
+    marksWord: "dhibcood",
+    answerKey: "🔑 Furaha Jawaabaha (macalinka kaliya)",
+    pageWord: "Bogga",
+    unnamed: "Cashar aan magac lahayn",
+    lessonWord: "Cashar",
+    bloom: {
+      Remember: "Xusuusnaan",
+      Understand: "Fahamka",
+      Apply: "Dabaqid",
+      Analyze: "Falanqayn",
+      Evaluate: "Qiimeyn",
+      Create: "Abuur",
+    },
   },
   en: {
     aName: "SECTION A: Objective Questions",
-    aInstr: "Answer all the parts below. The marks for each question are shown in brackets.",
+    aInstr:
+      "Answer all the parts below. The marks for each question are shown in brackets.",
     mcqName: "1. Multiple Choice",
     mcqInstr: "Choose the correct answer for each question.",
     blankName: "2. Fill in the Blanks",
     blankInstr: "Fill in each blank with the correct word or phrase.",
     matchName: "3. Matching",
-    matchInstr: "Match each item in Column A with its pair in Column B (write the matching number from Column A in the Answer space).",
-    matchPrompt: "Match Column A with Column B:", colA: "Column A", colB: "Column B", answerWord: "Answer",
+    matchInstr:
+      "Match each item in Column A with its pair in Column B (write the matching number from Column A in the Answer space).",
+    matchPrompt: "Match Column A with Column B:",
+    colA: "Column A",
+    colB: "Column B",
+    answerWord: "Answer",
     structName: "SECTION B: Structured Questions",
     structInstr: "Answer all questions. Write your answers in full.",
-    defSubject: "Subject", defClass: "Class", defDuration: "2 hours", defSchool: "Subject Examination",
+    defSubject: "Subject",
+    defClass: "Class",
+    defDuration: "2 hours",
+    defSchool: "Subject Examination",
     titleTemplate: "{subject} Examination — {class}",
-    totalMarks: "Total Marks", time: "Time", studentName: "Student's Name", klass: "Class", date: "Date",
-    source: "Source", marksWord: "marks", answerKey: "🔑 Answer Key (teacher only)",
-    pageWord: "Page", unnamed: "Untitled lesson", lessonWord: "Lesson",
-    bloom: { Remember: "Remember", Understand: "Understand", Apply: "Apply", Analyze: "Analyze", Evaluate: "Evaluate", Create: "Create" },
+    totalMarks: "Total Marks",
+    time: "Time",
+    studentName: "Student's Name",
+    klass: "Class",
+    date: "Date",
+    source: "Source",
+    marksWord: "marks",
+    answerKey: "🔑 Answer Key (teacher only)",
+    pageWord: "Page",
+    unnamed: "Untitled lesson",
+    lessonWord: "Lesson",
+    bloom: {
+      Remember: "Remember",
+      Understand: "Understand",
+      Apply: "Apply",
+      Analyze: "Analyze",
+      Evaluate: "Evaluate",
+      Create: "Create",
+    },
   },
   ar: {
     aName: "القسم أ: الأسئلة الموضوعية",
@@ -524,21 +612,51 @@ const LABELS = {
     blankName: "٢. أكمل الفراغات",
     blankInstr: "أكمل كل فراغ بالكلمة أو العبارة الصحيحة.",
     matchName: "٣. المزاوجة",
-    matchInstr: "صِل كل عنصر في العمود (أ) بما يناسبه في العمود (ب) (اكتب رقم العنصر الصحيح من العمود (أ) في خانة الإجابة).",
-    matchPrompt: "صِل بين العمود (أ) والعمود (ب):", colA: "العمود (أ)", colB: "العمود (ب)", answerWord: "الإجابة",
+    matchInstr:
+      "صِل كل عنصر في العمود (أ) بما يناسبه في العمود (ب) (اكتب رقم العنصر الصحيح من العمود (أ) في خانة الإجابة).",
+    matchPrompt: "صِل بين العمود (أ) والعمود (ب):",
+    colA: "العمود (أ)",
+    colB: "العمود (ب)",
+    answerWord: "الإجابة",
     structName: "القسم ب: الأسئلة المقالية",
     structInstr: "أجب عن جميع الأسئلة. اكتب إجاباتك كاملة.",
-    defSubject: "المادة", defClass: "الصف", defDuration: "ساعتان", defSchool: "امتحان المادة",
+    defSubject: "المادة",
+    defClass: "الصف",
+    defDuration: "ساعتان",
+    defSchool: "امتحان المادة",
     titleTemplate: "امتحان {subject} — {class}",
-    totalMarks: "المجموع الكلي للدرجات", time: "الزمن", studentName: "اسم الطالب", klass: "الصف", date: "التاريخ",
-    source: "المصدر", marksWord: "درجة", answerKey: "🔑 مفتاح الإجابات (للمعلم فقط)",
-    pageWord: "صفحة", unnamed: "درس بدون عنوان", lessonWord: "درس",
-    bloom: { Remember: "التذكر", Understand: "الفهم", Apply: "التطبيق", Analyze: "التحليل", Evaluate: "التقييم", Create: "الإبداع" },
+    totalMarks: "المجموع الكلي للدرجات",
+    time: "الزمن",
+    studentName: "اسم الطالب",
+    klass: "الصف",
+    date: "التاريخ",
+    source: "المصدر",
+    marksWord: "درجة",
+    answerKey: "🔑 مفتاح الإجابات (للمعلم فقط)",
+    pageWord: "صفحة",
+    unnamed: "درس بدون عنوان",
+    lessonWord: "درس",
+    bloom: {
+      Remember: "التذكر",
+      Understand: "الفهم",
+      Apply: "التطبيق",
+      Analyze: "التحليل",
+      Evaluate: "التقييم",
+      Create: "الإبداع",
+    },
   },
 };
 
-const STOP_EN = new Set("the and of is are that with for this which by as from be an it can has have was were or not its their these those when where what how because into also than then there each such".split(" "));
-const STOP_SO = new Set("waa oo iyo ee ka ku uu ay waxa waxaa waxay ah sida kala kuwa loo aad ugu jiray leh ayaa ayuu lagu markii haddii laakiin sidoo kale dhammaan kasta isku kuwaas halka maxay yihiin yahay oo ayaa soo sii lahaa karo ama sababtoo".split(" "));
+const STOP_EN = new Set(
+  "the and of is are that with for this which by as from be an it can has have was were or not its their these those when where what how because into also than then there each such".split(
+    " "
+  )
+);
+const STOP_SO = new Set(
+  "waa oo iyo ee ka ku uu ay waxa waxaa waxay ah sida kala kuwa loo aad ugu jiray leh ayaa ayuu lagu markii haddii laakiin sidoo kale dhammaan kasta isku kuwaas halka maxay yihiin yahay oo ayaa soo sii lahaa karo ama sababtoo".split(
+    " "
+  )
+);
 
 // Waxay u eegtaa qoraalka: Carabi (far), Soomaali, ama Ingiriisi.
 function detectLang(text) {
@@ -547,7 +665,8 @@ function detectLang(text) {
   const arabic = (sample.match(/[\u0600-\u06FF]/g) || []).length;
   if (letters && arabic / letters > 0.4) return "ar";
   const words = sample.toLowerCase().match(/[a-z']+/g) || [];
-  let en = 0, so = 0;
+  let en = 0,
+    so = 0;
   for (const w of words) {
     if (STOP_EN.has(w)) en++;
     if (STOP_SO.has(w)) so++;
@@ -582,19 +701,26 @@ function autoCounts({ chars, total, given, need }) {
     s = Math.max(s, Math.ceil(Math.max(0, partB) / 15)); // qaab-dhismeed kasta ≤ ~15 dhibcood
     s = Math.min(30, s);
   }
-  return { m: Math.min(60, m), f: Math.min(40, f), x: Math.min(6, x), s: Math.min(30, s) };
+  return {
+    m: Math.min(60, m),
+    f: Math.min(40, f),
+    x: Math.min(6, x),
+    s: Math.min(30, s),
+  };
 }
 
-function batchPrompt({ kind, n, marksList, textSlice, subject, klass, diagrams, diagramTopics, part, parts, langName, forced }) {
+function batchPrompt({ kind, n, marksList, textSlice, subject, klass, diagrams, diagramTopics, part, parts, langName, forced, }) {
   const bloom = {
     mcq: "Remember, Understand, Apply (lower and middle levels)",
     blank: "Remember, Understand (lower levels)",
     match: "Remember, Understand (lower levels)",
-    struct: "Apply, Analyze, Evaluate, Create (higher levels); mix short and long questions",
+    struct:
+      "Apply, Analyze, Evaluate, Create (higher levels); mix short and long questions",
   }[kind];
-  const diag = diagrams > 0
-    ? `EXACTLY ${diagrams} question(s) must include an "svg" diagram (simple, clear SVG: <svg viewBox="0 0 300 200" xmlns="http://www.w3.org/2000/svg">...</svg>, lines and short labels written in ${langName}; national-exam style: graph, diagram, geometry, circuit, etc.). All other questions have "svg": null.${diagramTopics ? " Preferred diagram topics: " + diagramTopics + "." : ""}`
-    : `All "svg" values must be null.`;
+  const diag =
+    diagrams > 0
+      ? `EXACTLY ${diagrams} question(s) must include an "svg" diagram (simple, clear SVG: <svg viewBox="0 0 300 200" xmlns="http://www.w3.org/2000/svg">...</svg>, lines and short labels written in ${langName}; national-exam style: graph, diagram, geometry, circuit, etc.). All other questions have "svg": null.${ diagramTopics ? " Preferred diagram topics: " + diagramTopics + "." : "" }`
+      : `All "svg" values must be null.`;
   const langRule = forced
     ? `LANGUAGE (critical): Write EVERYTHING (question text, options, answers, diagram labels) in ${langName}, even if the lesson text is in another language.`
     : `LANGUAGE (critical): The lesson text below is written in ${langName}. Write EVERYTHING (question text, options, answers, diagram labels) in ${langName}, exactly the language of the lesson. Do NOT translate into any other language. Keep technical terms as they appear in the lesson.`;
@@ -611,20 +737,11 @@ function batchPrompt({ kind, n, marksList, textSlice, subject, klass, diagrams, 
     struct: `{"questions":[{"text":"... (add parts a), b), c) when appropriate)","answer":"Short model answer + marking points","bloom":"Analyze","svg":null}]}`,
   }[kind];
   const unit = kind === "match" ? "matching sets" : "questions";
-  const marksLine = kind === "struct" ? `\nMarks per question (in order): ${marksList.join(", ")}. Questions with more marks must be longer / more demanding.` : "";
-  return `You are an expert exam writer for national-standard school exams in Somalia (Ministry of Education / National exam style). Write ${n} ${kindDesc} about ${subject} (${klass}).
-Bloom's levels: ${bloom}.${marksLine}
-${langRule}
-Every question must be based ONLY on the lesson text below and must not repeat each other. The text is part ${part}/${parts} of the lessons; make the questions cover this part well.
-${diag}
-
-LESSON TEXT:
-"""
-${textSlice}
-"""
-
-Return ONLY JSON (no commentary, no code fences). The number of ${unit} must be ${n}. The "bloom" field must always be one of these English keys: Remember, Understand, Apply, Analyze, Evaluate, Create (it is translated later). Format:
-${shape}`;
+  const marksLine =
+    kind === "struct"
+      ? `\nMarks per question (in order): ${marksList.join( ", " )}. Questions with more marks must be longer / more demanding.`
+      : "";
+  return `You are an expert exam writer for national-standard school exams in Somalia (Ministry of Education / National exam style). Write ${n} ${kindDesc} about ${subject} (${klass}). Bloom's levels: ${bloom}.${marksLine} ${langRule} Every question must be based ONLY on the lesson text below and must not repeat each other. The text is part ${part}/${parts} of the lessons; make the questions cover this part well. ${diag} LESSON TEXT: """ ${textSlice} """ Return ONLY JSON (no commentary, no code fences). The number of ${unit} must be ${n}. The "bloom" field must always be one of these English keys: Remember, Understand, Apply, Analyze, Evaluate, Create (it is translated later). Format: ${shape}`;
 }
 
 function shuffled(arr) {
@@ -658,8 +775,17 @@ app.post("/api/generate-exam", requireAdmin, async (req, res) => {
       lessons = [],
     } = req.body || {};
 
-    const isBlank = (v) => v === null || v === undefined || String(v).trim() === "" || isNaN(parseInt(v, 10));
-    const need = { m: isBlank(mcqN), f: isBlank(blankN), x: isBlank(matchN), s: isBlank(structN) };
+    const isBlank = (v) =>
+      v === null ||
+      v === undefined ||
+      String(v).trim() === "" ||
+      isNaN(parseInt(v, 10));
+    const need = {
+      m: isBlank(mcqN),
+      f: isBlank(blankN),
+      x: isBlank(matchN),
+      s: isBlank(structN),
+    };
     const given = {
       m: need.m ? 0 : Math.max(0, Math.min(60, parseInt(mcqN, 10))),
       f: need.f ? 0 : Math.max(0, Math.min(40, parseInt(blankN, 10))),
@@ -667,12 +793,22 @@ app.post("/api/generate-exam", requireAdmin, async (req, res) => {
       s: need.s ? 0 : Math.max(0, Math.min(30, parseInt(structN, 10))),
     };
     const total = Math.max(1, parseInt(totalMarks, 10) || 100);
-    if (!need.m && !need.f && !need.x && !need.s && given.m + given.f + given.x + given.s === 0) return res.status(400).json({ error: "questions required" });
+    if (
+      !need.m &&
+      !need.f &&
+      !need.x &&
+      !need.s &&
+      given.m + given.f + given.x + given.s === 0
+    )
+      return res.status(400).json({ error: "questions required" });
     const dCount = Math.max(0, Math.min(10, parseInt(diagramCount, 10) || 0));
     const dTopics = String(diagramTopics || "").trim();
 
-    const cleanLessons = (Array.isArray(lessons) ? lessons : []).filter((l) => l && l.text && l.text.trim());
-    if (!cleanLessons.length) return res.status(400).json({ error: "lessons required" });
+    const cleanLessons = (Array.isArray(lessons) ? lessons : []).filter(
+      (l) => l && l.text && l.text.trim()
+    );
+    if (!cleanLessons.length)
+      return res.status(400).json({ error: "lessons required" });
 
     // Luqadda imtixaanka: haddii la doorto waa la raacayaa, haddii kale waxay raacaysaa luqadda casharka.
     const forced = LANG_NAMES[lang] ? lang : null;
@@ -686,20 +822,37 @@ app.post("/api/generate-exam", requireAdmin, async (req, res) => {
     const durationF = String(duration).trim() || L.defDuration;
 
     const sourcesLabel = cleanLessons
-      .map((l) => [l.chapter, l.pages ? L.pageWord + " " + l.pages : ""].filter(Boolean).join(" — ") || L.unnamed)
+      .map(
+        (l) =>
+          [l.chapter, l.pages ? L.pageWord + " " + l.pages : ""]
+            .filter(Boolean)
+            .join(" — ") || L.unnamed
+      )
       .join(" | ");
 
     let allText = cleanLessons
       .map((l, i) => {
-        const tag = [l.chapter || L.lessonWord + " " + (i + 1), l.pages ? L.pageWord + " " + l.pages : ""].filter(Boolean).join(" — ");
+        const tag = [
+          l.chapter || L.lessonWord + " " + (i + 1),
+          l.pages ? L.pageWord + " " + l.pages : "",
+        ]
+          .filter(Boolean)
+          .join(" — ");
         return `### ${tag}\n${l.text.trim()}`;
       })
       .join("\n\n");
-    if (allText.length > MAX_SOURCE_CHARS) allText = allText.slice(0, MAX_SOURCE_CHARS);
+    if (allText.length > MAX_SOURCE_CHARS)
+      allText = allText.slice(0, MAX_SOURCE_CHARS);
 
     // Tirada su'aalaha: haddii aan la qorin, si otomaatig ah ayaa loo doortaa.
-    const { m: mN, f: fN, x: xN, s: sN } = autoCounts({ chars: allText.length, total, given, need });
-    if (mN + fN + xN + sN === 0) return res.status(400).json({ error: "questions required" });
+    const {
+      m: mN,
+      f: fN,
+      x: xN,
+      s: sN,
+    } = autoCounts({ chars: allText.length, total, given, need });
+    if (mN + fN + xN + sN === 0)
+      return res.status(400).json({ error: "questions required" });
 
     // Dhibcaha: Qaybta A (MCQ + meelaha banaan + isku aad) = 60%, Qaybta B (qaab-dhismeed) = 40%.
     // Su'aal kastaa waa inay ugu yaraan 1 dhibic hesho (lammaane kastaa 1 dhibic).
@@ -709,19 +862,29 @@ app.post("/api/generate-exam", requireAdmin, async (req, res) => {
     else if (sN === 0) partA = total;
     else {
       partA = Math.round(total * PART_A_SHARE);
-      partA = Math.max(partA, unitsA);       // Qaybta A >= tirada unugyadeeda
-      partA = Math.min(partA, total - sN);   // Qaybta B: su'aal kasta >= 1
+      partA = Math.max(partA, unitsA); // Qaybta A >= tirada unugyadeeda
+      partA = Math.min(partA, total - sN); // Qaybta B: su'aal kasta >= 1
       partA = Math.max(1, partA);
     }
     const structTotal = total - partA;
 
     // U qaybi dhibcaha Qaybta A noocyada: MCQ (1/unug), banaan (1/unug), isku-aad (5 unug/set)
-    const kinds = [["mcq", mN, 1], ["blank", fN, 1], ["match", xN, MATCH_PAIRS]].filter((k) => k[1] > 0);
+    const kinds = [
+      ["mcq", mN, 1],
+      ["blank", fN, 1],
+      ["match", xN, MATCH_PAIRS],
+    ].filter((k) => k[1] > 0);
     const kindTotals = {};
     let left = partA;
     kinds.forEach((k, i) => {
-      if (i === kinds.length - 1) { kindTotals[k[0]] = left; return; }
-      const t = Math.min(left, Math.max(k[1] * k[2], Math.round((partA * k[1] * k[2]) / unitsA)));
+      if (i === kinds.length - 1) {
+        kindTotals[k[0]] = left;
+        return;
+      }
+      const t = Math.min(
+        left,
+        Math.max(k[1] * k[2], Math.round((partA * k[1] * k[2]) / unitsA))
+      );
       kindTotals[k[0]] = t;
       left -= t;
     });
@@ -738,7 +901,8 @@ app.post("/api/generate-exam", requireAdmin, async (req, res) => {
     // Sawirrada ku qaybi qaybaha qaab-dhismeedka (haddii aysan jirin, MCQ)
     const diagTargets = structCounts.length ? structCounts : mcqCounts;
     const diagAlloc = diagTargets.map(() => 0);
-    for (let i = 0; i < dCount && diagTargets.length; i++) diagAlloc[i % diagTargets.length]++;
+    for (let i = 0; i < dCount && diagTargets.length; i++)
+      diagAlloc[i % diagTargets.length]++;
 
     const jobs = [];
     const addJobs = (kind, counts, marksArr, tokens, label, diagFn) => {
@@ -747,28 +911,91 @@ app.post("/api/generate-exam", requireAdmin, async (req, res) => {
       counts.forEach((n, i) => {
         const d = diagFn ? diagFn(i) : 0;
         const ml = marksArr.slice(offset, offset + n);
-        jobs.push({ kind, marks: ml, p: batchPrompt({ kind, n, marksList: ml, textSlice: slices[i], subject: subjectF, klass: klassF, diagrams: d, diagramTopics: dTopics, part: i + 1, parts: counts.length, langName, forced: !!forced }), max: d ? tokens + 2000 : tokens, label: label + " " + (i + 1) });
+        jobs.push({
+          kind,
+          marks: ml,
+          p: batchPrompt({
+            kind,
+            n,
+            marksList: ml,
+            textSlice: slices[i],
+            subject: subjectF,
+            klass: klassF,
+            diagrams: d,
+            diagramTopics: dTopics,
+            part: i + 1,
+            parts: counts.length,
+            langName,
+            forced: !!forced,
+          }),
+          max: d ? tokens + 2000 : tokens,
+          label: label + " " + (i + 1),
+        });
         offset += n;
       });
     };
-    addJobs("mcq", mcqCounts, mcqMarks, 4000, "MCQ", (i) => (structCounts.length ? 0 : diagAlloc[i]));
+    addJobs("mcq", mcqCounts, mcqMarks, 4000, "MCQ", (i) =>
+      structCounts.length ? 0 : diagAlloc[i]
+    );
     addJobs("blank", blankCounts, blankMarks, 3000, "Blank");
     addJobs("match", matchCounts, matchMarks, 3000, "Match");
-    addJobs("struct", structCounts, structMarks, 5000, "Struct", (i) => diagAlloc[i]);
+    addJobs(
+      "struct",
+      structCounts,
+      structMarks,
+      5000,
+      "Struct",
+      (i) => diagAlloc[i]
+    );
 
-    const runJob = (j) => askJson(j.p, j.max, j.label).catch((e) => { console.error("[job failed]", j.label, e.message); return { questions: [] }; });
+    const runJob = (j) =>
+      askJson(j.p, j.max, j.label).catch((e) => {
+        console.error("[job failed]", j.label, e.message);
+        return { questions: [] };
+      });
     const results = await Promise.all(jobs.map(runJob));
 
     // Haddii nooc ka mid ah (MCQ, banaan, isku-aad, qaab-dhismeed) uu ka yaraado intii la rabay, mar kale ku buuxi.
     const wanted = { mcq: mN, blank: fN, match: xN, struct: sN };
-    const okQ = (kind, q) => (kind === "match" ? Array.isArray(q.pairs) && q.pairs.filter((p) => p && p.left && p.right).length >= 2 : !!(q && q.text));
-    const gotKind = (kind) => results.reduce((a, r, i) => a + (jobs[i].kind === kind ? (r.questions || []).slice(0, jobs[i].marks.length).filter((q) => okQ(kind, q)).length : 0), 0);
+    const okQ = (kind, q) =>
+      kind === "match"
+        ? Array.isArray(q.pairs) &&
+          q.pairs.filter((p) => p && p.left && p.right).length >= 2
+        : !!(q && q.text);
+    const gotKind = (kind) =>
+      results.reduce(
+        (a, r, i) =>
+          a +
+          (jobs[i].kind === kind
+            ? (r.questions || [])
+                .slice(0, jobs[i].marks.length)
+                .filter((q) => okQ(kind, q)).length
+            : 0),
+        0
+      );
     for (const kind of ["mcq", "blank", "match", "struct"]) {
       for (let round = 0; round < 2; round++) {
         const missing = wanted[kind] - gotKind(kind);
         if (missing <= 0) break;
-        const j = { kind, marks: Array(missing).fill(1), label: kind + " top-up" };
-        j.p = batchPrompt({ kind, n: missing, marksList: j.marks, textSlice: allText, subject: subjectF, klass: klassF, diagrams: 0, diagramTopics: "", part: 1, parts: 1, langName, forced: !!forced });
+        const j = {
+          kind,
+          marks: Array(missing).fill(1),
+          label: kind + " top-up",
+        };
+        j.p = batchPrompt({
+          kind,
+          n: missing,
+          marksList: j.marks,
+          textSlice: allText,
+          subject: subjectF,
+          klass: klassF,
+          diagrams: 0,
+          diagramTopics: "",
+          part: 1,
+          parts: 1,
+          langName,
+          forced: !!forced,
+        });
         j.max = kind === "struct" ? 5000 : 3500;
         jobs.push(j);
         results.push(await runJob(j));
@@ -780,24 +1007,52 @@ app.post("/api/generate-exam", requireAdmin, async (req, res) => {
       const qs = [];
       results.forEach((r, i) => {
         if (jobs[i].kind !== kind) return;
-        (r.questions || []).slice(0, jobs[i].marks.length).filter((q) => okQ(kind, q)).forEach((q, k) => {
-          const marks = jobs[i].marks[k];
-          if (kind === "match") {
-            const pairs = (Array.isArray(q.pairs) ? q.pairs : []).filter((p) => p && p.left && p.right).slice(0, 8);
-            if (pairs.length < 2) return;
-            const extra = q.extra && String(q.extra).trim() && !pairs.some((p) => String(p.right) === String(q.extra)) ? [String(q.extra).trim()] : [];
-            const rightShuffled = shuffled([...pairs.map((p) => String(p.right)), ...extra]);
-            const letters = "ABCDEFGHIJ";
-            const ans = rightShuffled.map((r, ri) => { const li = pairs.findIndex((p) => String(p.right) === r); return `${ri + 1}) ${r} → ${li >= 0 ? li + 1 : "—"}`; }).join(" | ");
-            qs.push({
-              type: "match", marks, bloom: q.bloom || "", svg: null, answer: ans,
-              text: L.matchPrompt,
-              match: { left: pairs.map((p) => String(p.left)), right: rightShuffled, colA: L.colA, colB: L.colB, ans: L.answerWord },
-            });
-          } else {
-            qs.push({ ...q, type: kind, marks });
-          }
-        });
+        (r.questions || [])
+          .slice(0, jobs[i].marks.length)
+          .filter((q) => okQ(kind, q))
+          .forEach((q, k) => {
+            const marks = jobs[i].marks[k];
+            if (kind === "match") {
+              const pairs = (Array.isArray(q.pairs) ? q.pairs : [])
+                .filter((p) => p && p.left && p.right)
+                .slice(0, 8);
+              if (pairs.length < 2) return;
+              const extra =
+                q.extra &&
+                String(q.extra).trim() &&
+                !pairs.some((p) => String(p.right) === String(q.extra))
+                  ? [String(q.extra).trim()]
+                  : [];
+              const rightShuffled = shuffled([
+                ...pairs.map((p) => String(p.right)),
+                ...extra,
+              ]);
+              const letters = "ABCDEFGHIJ";
+              const ans = rightShuffled
+                .map((r, ri) => {
+                  const li = pairs.findIndex((p) => String(p.right) === r);
+                  return `${ri + 1}) ${r} → ${li >= 0 ? li + 1 : "—"}`;
+                })
+                .join(" | ");
+              qs.push({
+                type: "match",
+                marks,
+                bloom: q.bloom || "",
+                svg: null,
+                answer: ans,
+                text: L.matchPrompt,
+                match: {
+                  left: pairs.map((p) => String(p.left)),
+                  right: rightShuffled,
+                  colA: L.colA,
+                  colB: L.colB,
+                  ans: L.answerWord,
+                },
+              });
+            } else {
+              qs.push({ ...q, type: kind, marks });
+            }
+          });
       });
       return qs;
     };
@@ -807,7 +1062,8 @@ app.post("/api/generate-exam", requireAdmin, async (req, res) => {
     const qStruct = collect("struct");
 
     const secA = {
-      name: L.aName, instructions: L.aInstr,
+      name: L.aName,
+      instructions: L.aInstr,
       subtitles: {
         mcq: { name: L.mcqName, instr: L.mcqInstr },
         blank: { name: L.blankName, instr: L.blankInstr },
@@ -815,13 +1071,24 @@ app.post("/api/generate-exam", requireAdmin, async (req, res) => {
       },
       qs: [...qMcq, ...qBlank, ...qMatch],
     };
-    const secB = { name: L.structName, instructions: L.structInstr, qs: qStruct };
+    const secB = {
+      name: L.structName,
+      instructions: L.structInstr,
+      qs: qStruct,
+    };
 
     let n = 1;
     const answerKey = [];
     // Dib u xisaabi dhibcaha iyadoo la eegayo su'aalaha runta ah ee la abuuray,
     // si wadarta had iyo jeer ay u noqoto dhibcaha la doortay (tusaale 100).
-    rebalanceMarks({ qMcq, qBlank, qMatch, qStruct, total, partAShare: PART_A_SHARE });
+    rebalanceMarks({
+      qMcq,
+      qBlank,
+      qMatch,
+      qStruct,
+      total,
+      partAShare: PART_A_SHARE,
+    });
 
     const sections = [secA, secB]
       .filter((sec) => sec.qs.length)
@@ -833,17 +1100,53 @@ app.post("/api/generate-exam", requireAdmin, async (req, res) => {
         questions: sec.qs.map((q) => {
           const number = n++;
           answerKey.push({ number, answer: q.answer || "" });
-          return { number, type: q.type, text: q.text, marks: q.marks, bloom: q.bloom || "", options: q.options || null, match: q.match || null, svg: q.svg || null };
+          return {
+            number,
+            type: q.type,
+            text: q.text,
+            marks: q.marks,
+            bloom: q.bloom || "",
+            options: q.options || null,
+            match: q.match || null,
+            svg: q.svg || null,
+          };
         }),
       }));
     const data = { sections, answerKey };
-    const counts = { mcq: qMcq.length, blank: qBlank.length, match: qMatch.length, struct: qStruct.length, autoMcq: need.m, autoBlank: need.f, autoMatch: need.x, autoStruct: need.s };
-    const meta = { subject: subjectF, klass: klassF, totalMarks: total, duration: durationF, school, sourcesLabel, lang: examLang, labels: L, counts };
+    const counts = {
+      mcq: qMcq.length,
+      blank: qBlank.length,
+      match: qMatch.length,
+      struct: qStruct.length,
+      autoMcq: need.m,
+      autoBlank: need.f,
+      autoMatch: need.x,
+      autoStruct: need.s,
+    };
+    const meta = {
+      subject: subjectF,
+      klass: klassF,
+      totalMarks: total,
+      duration: durationF,
+      school,
+      sourcesLabel,
+      lang: examLang,
+      labels: L,
+      counts,
+    };
 
     const id = crypto.randomUUID();
     await pool.query(
       `INSERT INTO exams (id, subject, class_name, total_marks, duration, sources, data) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-      [id, subjectF, klassF, total, durationF, sourcesLabel, JSON.stringify({ ...data, meta })]
+      [
+        id,
+        subjectF,
+        klassF,
+        total,
+        durationF,
+        sourcesLabel,
+        JSON.stringify({ ...data, meta }),
+      ]
     );
 
     res.json({ id, exam: data, meta });
@@ -858,14 +1161,18 @@ app.post("/api/generate-exam", requireAdmin, async (req, res) => {
 app.post("/api/ocr-cache", requireAdmin, async (req, res) => {
   try {
     const { docHash = "", pages = [] } = req.body || {};
-    const nums = (Array.isArray(pages) ? pages : []).map((n) => parseInt(n, 10)).filter((n) => n >= 1);
+    const nums = (Array.isArray(pages) ? pages : [])
+      .map((n) => parseInt(n, 10))
+      .filter((n) => n >= 1);
     if (!docHash || !nums.length) return res.json({ pages: {} });
     const { rows } = await pool.query(
       "SELECT page, text FROM ocr_pages WHERE doc_hash=$1 AND page = ANY($2::int[])",
       [String(docHash), nums]
     );
     const out = {};
-    rows.forEach((r) => { out[r.page] = r.text; });
+    rows.forEach((r) => {
+      out[r.page] = r.text;
+    });
     res.json({ pages: out });
   } catch (e) {
     console.error(e);
@@ -884,18 +1191,34 @@ async function ocrOnePage(b64, mediaType) {
         "For a picture/diagram, write only a short bracketed note like [Diagram: ...] in the page's own language. " +
         "Output the transcription only. If the page has no text, output nothing.",
     },
-    { type: "image", source: { type: "base64", media_type: mediaType, data: b64 } },
+    {
+      type: "image",
+      source: { type: "base64", media_type: mediaType, data: b64 },
+    },
   ];
-  const r = await callAI({ messages: [{ role: "user", content }], maxTokens: 4096, label: "ocr" });
+  const r = await callAI({
+    messages: [{ role: "user", content }],
+    maxTokens: 4096,
+    label: "ocr",
+  });
   return (r.text || "").trim();
 }
 
 // OCR boggag scan ah. Boggagga hore loo akhriyay waa laga qaadayaa keydka, kuwa cusub oo keliya ayaa la akhriyaa.
 app.post("/api/ocr-pages", requireAdmin, async (req, res) => {
   try {
-    const { docHash = "", docName = "", pages = [], mediaType = "image/png" } = req.body || {};
-    if (!Array.isArray(pages) || !pages.length) return res.status(400).json({ error: "pages required" });
-    if (pages.length > 8) return res.status(400).json({ error: "too many pages in one call (max 8)" });
+    const {
+      docHash = "",
+      docName = "",
+      pages = [],
+      mediaType = "image/png",
+    } = req.body || {};
+    if (!Array.isArray(pages) || !pages.length)
+      return res.status(400).json({ error: "pages required" });
+    if (pages.length > 8)
+      return res
+        .status(400)
+        .json({ error: "too many pages in one call (max 8)" });
     const items = pages
       .map((p) => ({ num: parseInt(p && p.num, 10), image: p && p.image }))
       .filter((p) => p.num >= 1);
@@ -911,13 +1234,17 @@ app.post("/api/ocr-pages", requireAdmin, async (req, res) => {
         "SELECT page, text FROM ocr_pages WHERE doc_hash=$1 AND page = ANY($2::int[])",
         [String(docHash), items.map((p) => p.num)]
       );
-      rows.forEach((r) => { cached[r.page] = r.text; });
+      rows.forEach((r) => {
+        cached[r.page] = r.text;
+      });
     }
 
     const todo = [];
     for (const p of items) {
-      if (cached[p.num] !== undefined) { out[p.num] = cached[p.num]; fromCache.push(p.num); }
-      else if (p.image) todo.push(p);
+      if (cached[p.num] !== undefined) {
+        out[p.num] = cached[p.num];
+        fromCache.push(p.num);
+      } else if (p.image) todo.push(p);
     }
 
     await Promise.all(
@@ -928,8 +1255,7 @@ app.post("/api/ocr-pages", requireAdmin, async (req, res) => {
         // Keydi kaliya haddii qoraal la helay (bog madhan dib ayaa loo isku dayi karaa)
         if (docHash && text) {
           await pool.query(
-            `INSERT INTO ocr_pages (doc_hash, page, doc_name, text) VALUES ($1,$2,$3,$4)
-             ON CONFLICT (doc_hash, page) DO UPDATE SET text=EXCLUDED.text, doc_name=EXCLUDED.doc_name, created_at=now()`,
+            `INSERT INTO ocr_pages (doc_hash, page, doc_name, text) VALUES ($1,$2,$3,$4) ON CONFLICT (doc_hash, page) DO UPDATE SET text=EXCLUDED.text, doc_name=EXCLUDED.doc_name, created_at=now()`,
             [String(docHash), p.num, String(docName).slice(0, 200), text]
           );
         }
@@ -958,7 +1284,9 @@ app.get("/api/exams", requireAdmin, async (req, res) => {
 
 app.get("/api/exams/:id", requireAdmin, async (req, res) => {
   try {
-    const { rows } = await pool.query("SELECT * FROM exams WHERE id=$1", [req.params.id]);
+    const { rows } = await pool.query("SELECT * FROM exams WHERE id=$1", [
+      req.params.id,
+    ]);
     if (!rows.length) return res.status(404).json({ error: "not found" });
     res.json(rows[0]);
   } catch (e) {
@@ -978,44 +1306,63 @@ app.delete("/api/exams/:id", requireAdmin, async (req, res) => {
 });
 
 // ---------- Lesson Plan + Lesson Note ----------
-pool.query(`CREATE TABLE IF NOT EXISTS lesson_plans (
-  id TEXT PRIMARY KEY, teacher TEXT DEFAULT '', subject TEXT DEFAULT '', class_name TEXT DEFAULT '',
-  title TEXT DEFAULT '', data JSONB NOT NULL DEFAULT '{}', created_at TIMESTAMPTZ DEFAULT now())`
-).then(() => pool.query(`ALTER TABLE lesson_plans ADD COLUMN IF NOT EXISTS teacher_id TEXT`))
- .catch((e) => console.error("LP DB init error:", e));
+pool
+  .query(
+    `CREATE TABLE IF NOT EXISTS lesson_plans ( id TEXT PRIMARY KEY, teacher TEXT DEFAULT '', subject TEXT DEFAULT '', class_name TEXT DEFAULT '', title TEXT DEFAULT '', data JSONB NOT NULL DEFAULT '{}', created_at TIMESTAMPTZ DEFAULT now())`
+  )
+  .then(() =>
+    pool.query(
+      `ALTER TABLE lesson_plans ADD COLUMN IF NOT EXISTS teacher_id TEXT`
+    )
+  )
+  .catch((e) => console.error("LP DB init error:", e));
 
 async function createLessonPlan(b, teacherId) {
-    const f = (k) => String(b[k] || "").trim();
-    const src = f("text").slice(0, 30000);
-    // Luqadda: haddii la doorto waa la raacayaa; haddii kale waxay raacaysaa luqadda buugga/casharka (qoraalka), ama magaca maadada/cutubka.
-    const lang = LANG_NAMES[b.lang] ? b.lang : src ? detectLang(src) : detectLangShort([f("subject"), f("unit"), f("lesson")].join(" "));
-    const meta = { teacher: f("teacher"), klass: f("klass"), subject: f("subject"), unit: f("unit"), lesson: f("lesson"),
-      date: f("date"), day: f("day"), session: f("session"), weekly: f("weekly"), duration: f("duration") || DEFAULT_LESSON_DURATION[lang] };
-    if (!meta.unit && !meta.lesson) { const er = new Error("Fadlan geli cutubka ama cinwaanka casharka."); er.status = 400; throw er; }
-    const nGiven = parseInt(b.numObjectives, 10);
-    const nObj = nGiven >= 1 ? Math.min(12, nGiven) : 0; // 0 = otomaatig: raac objectives-ka buugga/manhajka
-    meta.lang = lang;
-    const prompt = `You are an experienced teacher in a Somali secondary school writing a STANDARD lesson plan and its matching LESSON NOTE.
-Subject: ${meta.subject || "-"}; Class: ${meta.klass || "-"}; Unit/Chapter: ${meta.unit || "-"}; Lesson title: ${meta.lesson || "-"}; Duration: ${meta.duration}.
-Write EVERYTHING in ${LANG_NAMES[lang]} (the language of the textbook): introduction, objectives, methods, aids, evaluation, and all note headings and paragraphs. Do not mix in words from another language.${src ? " Base the content ONLY on the lesson text below." : ""}
-Rules:
-- "objectives": ${nObj
-  ? `exactly ${nObj} measurable objectives chosen by the teacher.`
-  : `AUTOMATIC COUNT. ${src ? "First look in the lesson text for the objectives that the textbook/curriculum itself states for this unit/lesson (e.g. 'Objectives', 'By the end of this unit/lesson you should be able to', 'Learning outcomes'). If found, copy ALL of them, in the same order and the same meaning, without dropping or merging any. If the text states none, " : ""}Use the objectives of the Somali national curriculum for this unit/lesson; if you do not know them, write as many as the lesson genuinely needs (usually 3-8). Do not add filler objectives and do not cut real ones.`} Each starts with an action verb (define, explain, list, apply, compare...) completing "the learner should be able to ...". Do not repeat the lead-in phrase.
-- "introduction": 2-3 sentences linking the unit "${meta.unit}" to the lesson "${meta.lesson}".
-- "methods": 3-4 suitable teaching methods, comma separated. "aids": learning aids, comma separated.
-- "evaluation": NOT a fixed number. Write as many short questions/tasks as this lesson needs (normally at least one per objective, usually 4-12), covering ALL objectives in order, no padding.
-- "note": the LESSON NOTE = a complete summary built from the objectives, the unit and the lesson title. It MUST contain EVERY objective: one section per objective, in the same order and with no objective left out or merged (heading "h" = the key idea of that objective, "p" = 3-6 short lines separated by \\n, with definitions/explanations/examples/formulas that fully let the learner achieve that objective), then a final section with heading "${SUMMARY_WORD[lang]}". Use the same terms as the plan; it must be consistent with it and answer the evaluation items. Length follows the number of objectives (about 80-120 words per objective).
-${src ? `\nLESSON TEXT:\n"""\n${src}\n"""\n` : ""}
-Return ONLY JSON (no code fences): {"introduction":"","objectives":[""],"methods":"","aids":"","evaluation":[""],"note":[{"h":"","p":""}]}`;
-    const plan = await askJson(prompt, 9000, "lesson-plan");
-    plan.objectives = (plan.objectives || []).slice(0, 15);
-    plan.evaluation = (plan.evaluation || []).slice(0, 20);
-    const id = crypto.randomUUID();
-    await pool.query(
-      `INSERT INTO lesson_plans (id, teacher, subject, class_name, title, data, teacher_id) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-      [id, meta.teacher, meta.subject, meta.klass, [meta.unit, meta.lesson].filter(Boolean).join(" — "), JSON.stringify({ meta, plan }), teacherId || null]
-    );
+  const f = (k) => String(b[k] || "").trim();
+  const src = f("text").slice(0, 30000);
+  // Luqadda: haddii la doorto waa la raacayaa; haddii kale waxay raacaysaa luqadda buugga/casharka (qoraalka), ama magaca maadada/cutubka.
+  const lang = LANG_NAMES[b.lang]
+    ? b.lang
+    : src
+    ? detectLang(src)
+    : detectLangShort([f("subject"), f("unit"), f("lesson")].join(" "));
+  const meta = {
+    teacher: f("teacher"),
+    klass: f("klass"),
+    subject: f("subject"),
+    unit: f("unit"),
+    lesson: f("lesson"),
+    date: f("date"),
+    day: f("day"),
+    session: f("session"),
+    weekly: f("weekly"),
+    duration: f("duration") || DEFAULT_LESSON_DURATION[lang],
+  };
+  if (!meta.unit && !meta.lesson) {
+    const er = new Error("Fadlan geli cutubka ama cinwaanka casharka.");
+    er.status = 400;
+    throw er;
+  }
+  const nGiven = parseInt(b.numObjectives, 10);
+  const nObj = nGiven >= 1 ? Math.min(12, nGiven) : 0; // 0 = otomaatig: raac objectives-ka buugga/manhajka
+  meta.lang = lang;
+  const prompt = `You are an experienced teacher in a Somali secondary school writing a STANDARD lesson plan and its matching LESSON NOTE. Subject: ${meta.subject || "-"}; Class: ${meta.klass || "-"}; Unit/Chapter: ${ meta.unit || "-" }; Lesson title: ${meta.lesson || "-"}; Duration: ${meta.duration}. Write EVERYTHING in ${ LANG_NAMES[lang] } (the language of the textbook): introduction, objectives, methods, aids, evaluation, and all note headings and paragraphs. Do not mix in words from another language.${ src ? " Base the content ONLY on the lesson text below." : "" } Rules: - "objectives": ${ nObj ? `exactly ${nObj} measurable objectives chosen by the teacher.` : `AUTOMATIC COUNT. ${ src ? "First look in the lesson text for the objectives that the textbook/curriculum itself states for this unit/lesson (e.g. 'Objectives', 'By the end of this unit/lesson you should be able to', 'Learning outcomes'). If found, copy ALL of them, in the same order and the same meaning, without dropping or merging any. If the text states none, " : "" }Use the objectives of the Somali national curriculum for this unit/lesson; if you do not know them, write as many as the lesson genuinely needs (usually 3-8). Do not add filler objectives and do not cut real ones.` } Each starts with an action verb (define, explain, list, apply, compare...) completing "the learner should be able to ...". Do not repeat the lead-in phrase. - "introduction": 2-3 sentences linking the unit "${ meta.unit }" to the lesson "${meta.lesson}". - "methods": 3-4 suitable teaching methods, comma separated. "aids": learning aids, comma separated. - "evaluation": NOT a fixed number. Write as many short questions/tasks as this lesson needs (normally at least one per objective, usually 4-12), covering ALL objectives in order, no padding. - "note": the LESSON NOTE = a complete summary built from the objectives, the unit and the lesson title. It MUST contain EVERY objective: one section per objective, in the same order and with no objective left out or merged (heading "h" = the key idea of that objective, "p" = 3-6 short lines separated by \\n, with definitions/explanations/examples/formulas that fully let the learner achieve that objective), then a final section with heading "${ SUMMARY_WORD[lang] }". Use the same terms as the plan; it must be consistent with it and answer the evaluation items. Length follows the number of objectives (about 80-120 words per objective). ${src ? `\nLESSON TEXT:\n"""\n${src}\n"""\n` : ""} Return ONLY JSON (no code fences): {"introduction":"","objectives":[""],"methods":"","aids":"","evaluation":[""],"note":[{"h":"","p":""}]}`;
+  const plan = await askJson(prompt, 9000, "lesson-plan");
+  plan.objectives = (plan.objectives || []).slice(0, 15);
+  plan.evaluation = (plan.evaluation || []).slice(0, 20);
+  const id = crypto.randomUUID();
+  await pool.query(
+    `INSERT INTO lesson_plans (id, teacher, subject, class_name, title, data, teacher_id) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+    [
+      id,
+      meta.teacher,
+      meta.subject,
+      meta.klass,
+      [meta.unit, meta.lesson].filter(Boolean).join(" — "),
+      JSON.stringify({ meta, plan }),
+      teacherId || null,
+    ]
+  );
   return { id, meta, plan };
 }
 
@@ -1030,53 +1377,70 @@ app.post("/api/generate-lesson-plan", requireAdmin, async (req, res) => {
 
 app.get("/api/lesson-plans", requireAdmin, async (req, res) => {
   try {
-    const { rows } = await pool.query("SELECT id, teacher, subject, class_name, title, created_at FROM lesson_plans ORDER BY created_at DESC LIMIT 100");
+    const { rows } = await pool.query(
+      "SELECT id, teacher, subject, class_name, title, created_at FROM lesson_plans ORDER BY created_at DESC LIMIT 100"
+    );
     res.json(rows);
-  } catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "server error" });
+  }
 });
 app.get("/api/lesson-plans/:id", requireAdmin, async (req, res) => {
   try {
-    const { rows } = await pool.query("SELECT data FROM lesson_plans WHERE id=$1", [req.params.id]);
+    const { rows } = await pool.query(
+      "SELECT data FROM lesson_plans WHERE id=$1",
+      [req.params.id]
+    );
     if (!rows.length) return res.status(404).json({ error: "not found" });
     res.json(rows[0].data);
-  } catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "server error" });
+  }
 });
 app.delete("/api/lesson-plans/:id", requireAdmin, async (req, res) => {
-  try { await pool.query("DELETE FROM lesson_plans WHERE id=$1", [req.params.id]); res.json({ ok: true }); }
-  catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+  try {
+    await pool.query("DELETE FROM lesson_plans WHERE id=$1", [req.params.id]);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "server error" });
+  }
 });
 
 // ---------- Maktabadda Manhajka (buug kasta = fasal + maadada; OCR-kiisa waa la keydiyaa) ----------
-pool.query(`CREATE TABLE IF NOT EXISTS library_books (
-  id TEXT PRIMARY KEY,
-  class_name TEXT NOT NULL DEFAULT '',
-  subject TEXT NOT NULL DEFAULT '',
-  title TEXT NOT NULL DEFAULT '',
-  doc_hash TEXT NOT NULL UNIQUE,
-  num_pages INT NOT NULL DEFAULT 0,
-  created_at TIMESTAMPTZ DEFAULT now())`
-).catch((e) => console.error("Library DB init error:", e));
+pool
+  .query(
+    `CREATE TABLE IF NOT EXISTS library_books ( id TEXT PRIMARY KEY, class_name TEXT NOT NULL DEFAULT '', subject TEXT NOT NULL DEFAULT '', title TEXT NOT NULL DEFAULT '', doc_hash TEXT NOT NULL UNIQUE, num_pages INT NOT NULL DEFAULT 0, created_at TIMESTAMPTZ DEFAULT now())`
+  )
+  .catch((e) => console.error("Library DB init error:", e));
 
 function parseRangeServer(str, max) {
   const out = new Set();
-  String(str || "").split(",").forEach((part) => {
-    part = part.trim();
-    if (!part) return;
-    const m = part.match(/^(\d+)\s*-\s*(\d+)$/);
-    if (m) {
-      let a = parseInt(m[1], 10), b = parseInt(m[2], 10);
-      if (a > b) [a, b] = [b, a];
-      for (let i = a; i <= b && i <= max; i++) if (i >= 1) out.add(i);
-    } else {
-      const n = parseInt(part, 10);
-      if (n >= 1 && n <= max) out.add(n);
-    }
-  });
+  String(str || "")
+    .split(",")
+    .forEach((part) => {
+      part = part.trim();
+      if (!part) return;
+      const m = part.match(/^(\d+)\s*-\s*(\d+)$/);
+      if (m) {
+        let a = parseInt(m[1], 10),
+          b = parseInt(m[2], 10);
+        if (a > b) [a, b] = [b, a];
+        for (let i = a; i <= b && i <= max; i++) if (i >= 1) out.add(i);
+      } else {
+        const n = parseInt(part, 10);
+        if (n >= 1 && n <= max) out.add(n);
+      }
+    });
   return Array.from(out).sort((a, b) => a - b);
 }
 
 async function getBook(id) {
-  const { rows } = await pool.query("SELECT * FROM library_books WHERE id=$1", [id]);
+  const { rows } = await pool.query("SELECT * FROM library_books WHERE id=$1", [
+    id,
+  ]);
   return rows[0] || null;
 }
 
@@ -1084,12 +1448,13 @@ async function getBook(id) {
 app.get("/api/library", requireAdmin, async (req, res) => {
   try {
     const { rows } = await pool.query(
-      `SELECT b.id, b.class_name, b.subject, b.title, b.doc_hash, b.num_pages, b.created_at,
-              (SELECT COUNT(*) FROM ocr_pages p WHERE p.doc_hash = b.doc_hash)::int AS pages_done
-         FROM library_books b ORDER BY b.class_name, b.subject, b.title`
+      `SELECT b.id, b.class_name, b.subject, b.title, b.doc_hash, b.num_pages, b.created_at, (SELECT COUNT(*) FROM ocr_pages p WHERE p.doc_hash = b.doc_hash)::int AS pages_done FROM library_books b ORDER BY b.class_name, b.subject, b.title`
     );
     res.json(rows);
-  } catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "server error" });
+  }
 });
 
 // Diiwaangeli buug (haddii isla faylka hore loo geliyay, xogtiisa waa la cusboonaysiiyaa)
@@ -1098,22 +1463,30 @@ app.post("/api/library", requireAdmin, async (req, res) => {
     const b = req.body || {};
     const docHash = String(b.docHash || "").trim();
     if (!docHash) return res.status(400).json({ error: "docHash required" });
-    const cls = String(b.className || "").trim().slice(0, 60);
-    const subj = String(b.subject || "").trim().slice(0, 100);
-    const title = String(b.title || "").trim().slice(0, 200);
+    const cls = String(b.className || "")
+      .trim()
+      .slice(0, 60);
+    const subj = String(b.subject || "")
+      .trim()
+      .slice(0, 100);
+    const title = String(b.title || "")
+      .trim()
+      .slice(0, 200);
     const n = Math.max(0, parseInt(b.numPages, 10) || 0);
-    if (!cls || !subj) return res.status(400).json({ error: "Fasalka iyo maadada waa loo baahan yahay." });
+    if (!cls || !subj)
+      return res
+        .status(400)
+        .json({ error: "Fasalka iyo maadada waa loo baahan yahay." });
     const id = crypto.randomUUID();
     const { rows } = await pool.query(
-      `INSERT INTO library_books (id, class_name, subject, title, doc_hash, num_pages)
-       VALUES ($1,$2,$3,$4,$5,$6)
-       ON CONFLICT (doc_hash) DO UPDATE SET class_name=EXCLUDED.class_name, subject=EXCLUDED.subject,
-         title=EXCLUDED.title, num_pages=EXCLUDED.num_pages
-       RETURNING id`,
+      `INSERT INTO library_books (id, class_name, subject, title, doc_hash, num_pages) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (doc_hash) DO UPDATE SET class_name=EXCLUDED.class_name, subject=EXCLUDED.subject, title=EXCLUDED.title, num_pages=EXCLUDED.num_pages RETURNING id`,
       [id, cls, subj, title || subj, docHash, n]
     );
     res.json({ id: rows[0].id });
-  } catch (e) { console.error(e); res.status(500).json({ error: e.message || "server error" }); }
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message || "server error" });
+  }
 });
 
 // Bogagga hore loo keydiyay (si OCR-ku uga sii socdo halka uu istaagay)
@@ -1121,9 +1494,15 @@ app.get("/api/library/:id/done", requireAdmin, async (req, res) => {
   try {
     const book = await getBook(req.params.id);
     if (!book) return res.status(404).json({ error: "not found" });
-    const { rows } = await pool.query("SELECT page FROM ocr_pages WHERE doc_hash=$1 ORDER BY page", [book.doc_hash]);
+    const { rows } = await pool.query(
+      "SELECT page FROM ocr_pages WHERE doc_hash=$1 ORDER BY page",
+      [book.doc_hash]
+    );
     res.json({ pages: rows.map((r) => r.page) });
-  } catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "server error" });
+  }
 });
 
 // Keydi qoraalka bogagga PDF-ka ee qoraalkoodu horay ugu jiray (OCR looma baahna)
@@ -1135,16 +1514,21 @@ app.post("/api/library/:id/store-pages", requireAdmin, async (req, res) => {
     const entries = Object.entries(pages)
       .map(([k, v]) => [parseInt(k, 10), String(v || "").trim()])
       .filter(([n, t]) => n >= 1 && t);
-    if (entries.length > 60) return res.status(400).json({ error: "too many pages in one call (max 60)" });
+    if (entries.length > 60)
+      return res
+        .status(400)
+        .json({ error: "too many pages in one call (max 60)" });
     for (const [n, t] of entries) {
       await pool.query(
-        `INSERT INTO ocr_pages (doc_hash, page, doc_name, text) VALUES ($1,$2,$3,$4)
-         ON CONFLICT (doc_hash, page) DO UPDATE SET text=EXCLUDED.text, doc_name=EXCLUDED.doc_name, created_at=now()`,
+        `INSERT INTO ocr_pages (doc_hash, page, doc_name, text) VALUES ($1,$2,$3,$4) ON CONFLICT (doc_hash, page) DO UPDATE SET text=EXCLUDED.text, doc_name=EXCLUDED.doc_name, created_at=now()`,
         [book.doc_hash, n, book.title.slice(0, 200), t]
       );
     }
     res.json({ stored: entries.length });
-  } catch (e) { console.error(e); res.status(500).json({ error: e.message || "server error" }); }
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message || "server error" });
+  }
 });
 
 // Soo qaad qoraalka bogagga (tusaale ?pages=24-31). Haddii bogag aan la qorin, 90k xaraf ee ugu horreeya.
@@ -1153,11 +1537,20 @@ async function libTextFor(book, asked) {
   asked = String(asked || "").trim();
   const nums = asked ? parseRangeServer(asked, max) : null;
   const { rows } = nums
-    ? await pool.query("SELECT page, text FROM ocr_pages WHERE doc_hash=$1 AND page = ANY($2::int[]) ORDER BY page", [book.doc_hash, nums])
-    : await pool.query("SELECT page, text FROM ocr_pages WHERE doc_hash=$1 ORDER BY page", [book.doc_hash]);
+    ? await pool.query(
+        "SELECT page, text FROM ocr_pages WHERE doc_hash=$1 AND page = ANY($2::int[]) ORDER BY page",
+        [book.doc_hash, nums]
+      )
+    : await pool.query(
+        "SELECT page, text FROM ocr_pages WHERE doc_hash=$1 ORDER BY page",
+        [book.doc_hash]
+      );
   let text = rows.map((r) => r.text).join("\n\n");
   let truncated = false;
-  if (text.length > MAX_SOURCE_CHARS) { text = text.slice(0, MAX_SOURCE_CHARS); truncated = true; }
+  if (text.length > MAX_SOURCE_CHARS) {
+    text = text.slice(0, MAX_SOURCE_CHARS);
+    truncated = true;
+  }
   const have = new Set(rows.map((r) => r.page));
   return {
     text,
@@ -1170,7 +1563,9 @@ async function libTextFor(book, asked) {
 
 // Raadi cutub/cashar buugga gudihiisa (waxay soo celisaa lambarrada bogagga)
 async function libSearchFor(book, qRaw) {
-  const q = String(qRaw || "").trim().slice(0, 100);
+  const q = String(qRaw || "")
+    .trim()
+    .slice(0, 100);
   if (q.length < 2) return { hits: [] };
   const like = "%" + q.replace(/[\\%_]/g, (m) => "\\" + m) + "%";
   const { rows } = await pool.query(
@@ -1180,7 +1575,10 @@ async function libSearchFor(book, qRaw) {
   const hits = rows.map((r) => {
     const i = r.text.toLowerCase().indexOf(q.toLowerCase());
     const st = Math.max(0, i - 40);
-    return { page: r.page, snippet: r.text.slice(st, st + 120).replace(/\s+/g, " ") };
+    return {
+      page: r.page,
+      snippet: r.text.slice(st, st + 120).replace(/\s+/g, " "),
+    };
   });
   return { hits };
 }
@@ -1190,7 +1588,10 @@ app.get("/api/library/:id/text", requireAdmin, async (req, res) => {
     const book = await getBook(req.params.id);
     if (!book) return res.status(404).json({ error: "not found" });
     res.json(await libTextFor(book, req.query.pages));
-  } catch (e) { console.error(e); res.status(500).json({ error: e.message || "server error" }); }
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message || "server error" });
+  }
 });
 
 app.get("/api/library/:id/search", requireAdmin, async (req, res) => {
@@ -1198,30 +1599,38 @@ app.get("/api/library/:id/search", requireAdmin, async (req, res) => {
     const book = await getBook(req.params.id);
     if (!book) return res.status(404).json({ error: "not found" });
     res.json(await libSearchFor(book, req.query.q));
-  } catch (e) { console.error(e); res.status(500).json({ error: e.message || "server error" }); }
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message || "server error" });
+  }
 });
 
 app.delete("/api/library/:id", requireAdmin, async (req, res) => {
   try {
     const book = await getBook(req.params.id);
     if (!book) return res.json({ ok: true });
-    await pool.query("DELETE FROM ocr_pages WHERE doc_hash=$1", [book.doc_hash]);
+    await pool.query("DELETE FROM ocr_pages WHERE doc_hash=$1", [
+      book.doc_hash,
+    ]);
     await pool.query("DELETE FROM library_books WHERE id=$1", [req.params.id]);
     res.json({ ok: true });
-  } catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "server error" });
+  }
 });
 
 // ---------- Macallimiinta: user + link gaar ah (fasalo + maaddooyin la fasaxay oo keliya) ----------
-pool.query(`CREATE TABLE IF NOT EXISTS teachers (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  token TEXT NOT NULL UNIQUE,
-  assignments JSONB NOT NULL DEFAULT '[]',
-  active BOOLEAN NOT NULL DEFAULT true,
-  created_at TIMESTAMPTZ DEFAULT now())`
-).catch((e) => console.error("Teachers DB init error:", e));
+pool
+  .query(
+    `CREATE TABLE IF NOT EXISTS teachers ( id TEXT PRIMARY KEY, name TEXT NOT NULL, token TEXT NOT NULL UNIQUE, assignments JSONB NOT NULL DEFAULT '[]', active BOOLEAN NOT NULL DEFAULT true, created_at TIMESTAMPTZ DEFAULT now())`
+  )
+  .catch((e) => console.error("Teachers DB init error:", e));
 
-const TEACHER_DAILY_LIMIT = parseInt(process.env.TEACHER_DAILY_LIMIT || "30", 10); // lesson plan/maalin/macallin
+const TEACHER_DAILY_LIMIT = parseInt(
+  process.env.TEACHER_DAILY_LIMIT || "30",
+  10
+); // lesson plan/maalin/macallin
 const newToken = () => crypto.randomBytes(24).toString("hex"); // 48 xaraf — lama qiyaasi karo
 
 // assignments: [{klass:"Form 1", subject:"Mathematics"}, ...] — nadiifi oo ka saar nuqul
@@ -1229,8 +1638,12 @@ function cleanAssignments(arr) {
   const seen = new Set();
   const out = [];
   (Array.isArray(arr) ? arr : []).forEach((a) => {
-    const klass = String((a && a.klass) || "").trim().slice(0, 60);
-    const subject = String((a && a.subject) || "").trim().slice(0, 100);
+    const klass = String((a && a.klass) || "")
+      .trim()
+      .slice(0, 60);
+    const subject = String((a && a.subject) || "")
+      .trim()
+      .slice(0, 100);
     if (!klass || !subject) return;
     const k = klass + "||" + subject;
     if (seen.has(k)) return;
@@ -1246,20 +1659,27 @@ const isAllowed = (t, klass, subject) =>
 app.get("/api/teachers", requireAdmin, async (req, res) => {
   try {
     const { rows } = await pool.query(
-      `SELECT t.id, t.name, t.token, t.assignments, t.active, t.created_at,
-              (SELECT COUNT(*) FROM lesson_plans l WHERE l.teacher_id = t.id)::int AS plans
-         FROM teachers t ORDER BY t.created_at DESC`
+      `SELECT t.id, t.name, t.token, t.assignments, t.active, t.created_at, (SELECT COUNT(*) FROM lesson_plans l WHERE l.teacher_id = t.id)::int AS plans FROM teachers t ORDER BY t.created_at DESC`
     );
     res.json(rows);
-  } catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "server error" });
+  }
 });
 
 app.post("/api/teachers", requireAdmin, async (req, res) => {
   try {
-    const name = String((req.body && req.body.name) || "").trim().slice(0, 100);
+    const name = String((req.body && req.body.name) || "")
+      .trim()
+      .slice(0, 100);
     const assignments = cleanAssignments(req.body && req.body.assignments);
-    if (!name) return res.status(400).json({ error: "Magaca macallinka geli." });
-    if (!assignments.length) return res.status(400).json({ error: "Ku dar ugu yaraan hal fasal + maado." });
+    if (!name)
+      return res.status(400).json({ error: "Magaca macallinka geli." });
+    if (!assignments.length)
+      return res
+        .status(400)
+        .json({ error: "Ku dar ugu yaraan hal fasal + maado." });
     const id = crypto.randomUUID();
     const token = newToken();
     await pool.query(
@@ -1267,15 +1687,22 @@ app.post("/api/teachers", requireAdmin, async (req, res) => {
       [id, name, token, JSON.stringify(assignments)]
     );
     res.json({ id, token });
-  } catch (e) { console.error(e); res.status(500).json({ error: e.message || "server error" }); }
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message || "server error" });
+  }
 });
 
 // Wax ka beddel: magac, fasalo+maaddooyin, daar/damee, ama link cusub (regenerate)
 app.put("/api/teachers/:id", requireAdmin, async (req, res) => {
   try {
     const b = req.body || {};
-    const sets = [], vals = [];
-    const add = (col, v) => { vals.push(v); sets.push(`${col}=$${vals.length}`); };
+    const sets = [],
+      vals = [];
+    const add = (col, v) => {
+      vals.push(v);
+      sets.push(`${col}=$${vals.length}`);
+    };
     if (typeof b.name === "string") {
       const n = b.name.trim().slice(0, 100);
       if (!n) return res.status(400).json({ error: "Magaca macallinka geli." });
@@ -1283,36 +1710,55 @@ app.put("/api/teachers/:id", requireAdmin, async (req, res) => {
     }
     if (Array.isArray(b.assignments)) {
       const a = cleanAssignments(b.assignments);
-      if (!a.length) return res.status(400).json({ error: "Ku dar ugu yaraan hal fasal + maado." });
+      if (!a.length)
+        return res
+          .status(400)
+          .json({ error: "Ku dar ugu yaraan hal fasal + maado." });
       add("assignments", JSON.stringify(a));
     }
     if (typeof b.active === "boolean") add("active", b.active);
     if (b.regenerate) add("token", newToken());
     if (!sets.length) return res.json({ ok: true });
     vals.push(req.params.id);
-    const { rows } = await pool.query(`UPDATE teachers SET ${sets.join(", ")} WHERE id=$${vals.length} RETURNING token`, vals);
+    const { rows } = await pool.query(
+      `UPDATE teachers SET ${sets.join(", ")} WHERE id=$${ vals.length } RETURNING token`,
+      vals
+    );
     if (!rows.length) return res.status(404).json({ error: "not found" });
     res.json({ ok: true, token: rows[0].token });
-  } catch (e) { console.error(e); res.status(500).json({ error: e.message || "server error" }); }
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message || "server error" });
+  }
 });
 
 app.delete("/api/teachers/:id", requireAdmin, async (req, res) => {
   try {
     await pool.query("DELETE FROM teachers WHERE id=$1", [req.params.id]);
     res.json({ ok: true });
-  } catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "server error" });
+  }
 });
 
 // --- Macallinka: gelitaanka waxaa lagu hubiyaa token-ka link-ga (header x-teacher-token) ---
 async function requireTeacher(req, res, next) {
   try {
     const token = String(req.header("x-teacher-token") || "");
-    if (!/^[a-f0-9]{48}$/.test(token)) return res.status(401).json({ error: "unauthorized" });
-    const { rows } = await pool.query("SELECT * FROM teachers WHERE token=$1 AND active=true", [token]);
+    if (!/^[a-f0-9]{48}$/.test(token))
+      return res.status(401).json({ error: "unauthorized" });
+    const { rows } = await pool.query(
+      "SELECT * FROM teachers WHERE token=$1 AND active=true",
+      [token]
+    );
     if (!rows.length) return res.status(401).json({ error: "unauthorized" });
     req.teacher = rows[0];
     next();
-  } catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "server error" });
+  }
 }
 
 // Buug kaliya haddii fasalkiisa + maadadiisu ku jiraan fasaxa macallinka
@@ -1326,48 +1772,69 @@ async function teacherBook(req, res) {
 }
 
 app.get("/api/t/me", requireTeacher, (req, res) => {
-  res.json({ name: req.teacher.name, assignments: req.teacher.assignments || [] });
+  res.json({
+    name: req.teacher.name,
+    assignments: req.teacher.assignments || [],
+  });
 });
 
 app.get("/api/t/library", requireTeacher, async (req, res) => {
   try {
     const { rows } = await pool.query(
-      `SELECT b.id, b.class_name, b.subject, b.title, b.num_pages,
-              (SELECT COUNT(*) FROM ocr_pages p WHERE p.doc_hash = b.doc_hash)::int AS pages_done
-         FROM library_books b ORDER BY b.class_name, b.subject, b.title`
+      `SELECT b.id, b.class_name, b.subject, b.title, b.num_pages, (SELECT COUNT(*) FROM ocr_pages p WHERE p.doc_hash = b.doc_hash)::int AS pages_done FROM library_books b ORDER BY b.class_name, b.subject, b.title`
     );
-    res.json(rows.filter((r) => isAllowed(req.teacher, r.class_name, r.subject)));
-  } catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+    res.json(
+      rows.filter((r) => isAllowed(req.teacher, r.class_name, r.subject))
+    );
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "server error" });
+  }
 });
 
 app.get("/api/t/library/:id/text", requireTeacher, async (req, res) => {
   try {
-    const book = await teacherBook(req, res); if (!book) return;
+    const book = await teacherBook(req, res);
+    if (!book) return;
     res.json(await libTextFor(book, req.query.pages));
-  } catch (e) { console.error(e); res.status(500).json({ error: e.message || "server error" }); }
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message || "server error" });
+  }
 });
 
 app.get("/api/t/library/:id/search", requireTeacher, async (req, res) => {
   try {
-    const book = await teacherBook(req, res); if (!book) return;
+    const book = await teacherBook(req, res);
+    if (!book) return;
     res.json(await libSearchFor(book, req.query.q));
-  } catch (e) { console.error(e); res.status(500).json({ error: e.message || "server error" }); }
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message || "server error" });
+  }
 });
 
 app.post("/api/t/generate-lesson-plan", requireTeacher, async (req, res) => {
   try {
     const b = { ...(req.body || {}) };
-    const klass = String(b.klass || "").trim(), subject = String(b.subject || "").trim();
+    const klass = String(b.klass || "").trim(),
+      subject = String(b.subject || "").trim();
     // Hubin server-ka dhexdiisa — xitaa haddii cidi bedesho browser-ka
     if (!isAllowed(req.teacher, klass, subject)) {
-      return res.status(403).json({ error: "Fasalkan ama maadadan lagama fasaxin." });
+      return res
+        .status(403)
+        .json({ error: "Fasalkan ama maadadan lagama fasaxin." });
     }
     const { rows } = await pool.query(
       "SELECT COUNT(*)::int AS n FROM lesson_plans WHERE teacher_id=$1 AND created_at > now() - interval '24 hours'",
       [req.teacher.id]
     );
     if (rows[0].n >= TEACHER_DAILY_LIMIT) {
-      return res.status(429).json({ error: `Xadka maalinlaha ah (${TEACHER_DAILY_LIMIT} lesson plan) waa la gaaray. Berri isku day.` });
+      return res
+        .status(429)
+        .json({
+          error: `Xadka maalinlaha ah (${TEACHER_DAILY_LIMIT} lesson plan) waa la gaaray. Berri isku day.`,
+        });
     }
     b.teacher = req.teacher.name; // magaca macallinka waa laga qaadaa xogta, ma bedeli karo
     res.json(await createLessonPlan(b, req.teacher.id));
@@ -1384,20 +1851,35 @@ app.get("/api/t/lesson-plans", requireTeacher, async (req, res) => {
       [req.teacher.id]
     );
     res.json(rows);
-  } catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "server error" });
+  }
 });
 app.get("/api/t/lesson-plans/:id", requireTeacher, async (req, res) => {
   try {
-    const { rows } = await pool.query("SELECT data FROM lesson_plans WHERE id=$1 AND teacher_id=$2", [req.params.id, req.teacher.id]);
+    const { rows } = await pool.query(
+      "SELECT data FROM lesson_plans WHERE id=$1 AND teacher_id=$2",
+      [req.params.id, req.teacher.id]
+    );
     if (!rows.length) return res.status(404).json({ error: "not found" });
     res.json(rows[0].data);
-  } catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "server error" });
+  }
 });
 app.delete("/api/t/lesson-plans/:id", requireTeacher, async (req, res) => {
   try {
-    await pool.query("DELETE FROM lesson_plans WHERE id=$1 AND teacher_id=$2", [req.params.id, req.teacher.id]);
+    await pool.query("DELETE FROM lesson_plans WHERE id=$1 AND teacher_id=$2", [
+      req.params.id,
+      req.teacher.id,
+    ]);
     res.json({ ok: true });
-  } catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "server error" });
+  }
 });
 
 // Bogga macallinka: /t/<token>
@@ -1408,15 +1890,43 @@ app.get("/t/:token", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "teacher.html"));
 });
 
+// ---------- /version: hubi in faylasha si buuxda loo deploy-gareeyay ----------
+app.get("/version", (req, res) => {
+  const info = {};
+  for (const f of ["index.html", "natiijo.html", "teacher.html"]) {
+    try {
+      const txt = fs.readFileSync(path.join(__dirname, "public", f), "utf8");
+      info[f] = {
+        bytes: Buffer.byteLength(txt),
+        endsWithHtmlTag: /<\/html>\s*$/i.test(txt),
+      };
+    } catch (e) {
+      info[f] = { error: "lama helin" };
+    }
+  }
+  info.hasSchoolsTab = !!(
+    info["index.html"] &&
+    !info["index.html"].error &&
+    fs
+      .readFileSync(path.join(__dirname, "public", "index.html"), "utf8")
+      .includes('id="tabSch"')
+  );
+  res.setHeader("Cache-Control", "no-store");
+  res.json(info);
+});
+
 // ---------- Static ----------
 app.use(
   express.static(path.join(__dirname, "public"), {
     setHeaders: (res, filePath) => {
-      if (filePath.endsWith(".html")) res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+      if (filePath.endsWith(".html"))
+        res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     },
   })
 );
-app.get("/", (req, res) => res.sendFile(path.join(__dirname, "public", "index.html")));
+app.get("/", (req, res) =>
+  res.sendFile(path.join(__dirname, "public", "index.html"))
+);
 
 const PORT = process.env.PORT || 3000;
 
@@ -1424,41 +1934,89 @@ const PORT = process.env.PORT || 3000;
 app.get("/api/results", requireAdmin, async (req, res) => {
   try {
     const multi = req.query.multi === "1"; // 1 = natiijooyinka dugsiyada (isku-darsan), 0 = Form 4 caadi ah
-    const { rows } = await pool.query("SELECT id, name, class_name, updated_at, jsonb_array_length(COALESCE(data->'students','[]'::jsonb)) AS n FROM result_sets WHERE COALESCE((data->>'multi')::boolean,false)=$1 ORDER BY updated_at DESC LIMIT 100", [multi]);
+    const { rows } = await pool.query(
+      "SELECT id, name, class_name, updated_at, jsonb_array_length(COALESCE(data->'students','[]'::jsonb)) AS n FROM result_sets WHERE COALESCE((data->>'multi')::boolean,false)=$1 ORDER BY updated_at DESC LIMIT 100",
+      [multi]
+    );
     res.json(rows);
-  } catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "server error" });
+  }
 });
 app.get("/api/results/:id", requireAdmin, async (req, res) => {
   try {
-    const { rows } = await pool.query("SELECT id, name, class_name, data, public_token, published FROM result_sets WHERE id=$1", [req.params.id]);
+    const { rows } = await pool.query(
+      "SELECT id, name, class_name, data, public_token, published FROM result_sets WHERE id=$1",
+      [req.params.id]
+    );
     if (!rows.length) return res.status(404).json({ error: "lama helin" });
     res.json(rows[0]);
-  } catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "server error" });
+  }
 });
 app.post("/api/results", requireAdmin, async (req, res) => {
   try {
     const b = req.body || {};
     const id = b.id || crypto.randomUUID();
-    const subjects = Array.isArray(b.subjects) ? b.subjects.slice(0, 20).map((x) => String(x).slice(0, 60)) : [];
+    const subjects = Array.isArray(b.subjects)
+      ? b.subjects.slice(0, 20).map((x) => String(x).slice(0, 60))
+      : [];
     const multi = !!b.multi; // natiijooyinka dugsiyo badan (school + cls ardayga kasta)
-    const students = (Array.isArray(b.students) ? b.students.slice(0, multi ? 5000 : 500) : []).map((x) => ({
+    const students = (
+      Array.isArray(b.students) ? b.students.slice(0, multi ? 5000 : 500) : []
+    ).map((x) => ({
       name: String((x && x.name) || "").slice(0, 120),
-      id: String((x && x.id) || "").trim().slice(0, 60),
-      s: Array.isArray(x && x.s) ? x.s.slice(0, 20).map((v) => (v === "" || v == null ? "" : String(v).slice(0, 8))) : [],
-      ...(multi ? { school: String((x && x.school) || "").trim().slice(0, 120), cls: String((x && x.cls) || "").trim().slice(0, 50) } : {}),
+      id: String((x && x.id) || "")
+        .trim()
+        .slice(0, 60),
+      s: Array.isArray(x && x.s)
+        ? x.s
+            .slice(0, 20)
+            .map((v) => (v === "" || v == null ? "" : String(v).slice(0, 8)))
+        : [],
+      ...(multi
+        ? {
+            school: String((x && x.school) || "")
+              .trim()
+              .slice(0, 120),
+            cls: String((x && x.cls) || "")
+              .trim()
+              .slice(0, 50),
+          }
+        : {}),
     }));
-    const data = { subjects, students, pass: Number(b.pass) || 50, ...(multi ? { multi: true } : {}) };
+    const data = {
+      subjects,
+      students,
+      pass: Number(b.pass) || 50,
+      ...(multi ? { multi: true } : {}),
+    };
     await pool.query(
-      `INSERT INTO result_sets (id, name, class_name, data, updated_at) VALUES ($1,$2,$3,$4,now())
-       ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, class_name=EXCLUDED.class_name, data=EXCLUDED.data, updated_at=now()`,
-      [id, String(b.name || "").slice(0, 200), multi ? "Dugsiyo" : String(b.class_name || "Form 4").slice(0, 50), JSON.stringify(data)]
+      `INSERT INTO result_sets (id, name, class_name, data, updated_at) VALUES ($1,$2,$3,$4,now()) ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, class_name=EXCLUDED.class_name, data=EXCLUDED.data, updated_at=now()`,
+      [
+        id,
+        String(b.name || "").slice(0, 200),
+        multi ? "Dugsiyo" : String(b.class_name || "Form 4").slice(0, 50),
+        JSON.stringify(data),
+      ]
     );
     res.json({ ok: true, id });
-  } catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "server error" });
+  }
 });
 app.delete("/api/results/:id", requireAdmin, async (req, res) => {
-  try { await pool.query("DELETE FROM result_sets WHERE id=$1", [req.params.id]); res.json({ ok: true }); }
-  catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+  try {
+    await pool.query("DELETE FROM result_sets WHERE id=$1", [req.params.id]);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "server error" });
+  }
 });
 
 // ---------- Link-ga ardayda: arday kasta ID-giisa ayuu ku arkaa natiijadiisa ----------
@@ -1466,13 +2024,23 @@ app.post("/api/results/:id/publish", requireAdmin, async (req, res) => {
   try {
     const on = req.body && req.body.on === false ? false : true;
     const regen = !!(req.body && req.body.regen);
-    const cur = await pool.query("SELECT public_token FROM result_sets WHERE id=$1", [req.params.id]);
-    if (!cur.rows.length) return res.status(404).json({ error: "Natiijada marka hore keydi." });
+    const cur = await pool.query(
+      "SELECT public_token FROM result_sets WHERE id=$1",
+      [req.params.id]
+    );
+    if (!cur.rows.length)
+      return res.status(404).json({ error: "Natiijada marka hore keydi." });
     let token = cur.rows[0].public_token;
     if (!token || regen) token = crypto.randomBytes(9).toString("base64url");
-    await pool.query("UPDATE result_sets SET public_token=$2, published=$3 WHERE id=$1", [req.params.id, token, on]);
+    await pool.query(
+      "UPDATE result_sets SET public_token=$2, published=$3 WHERE id=$1",
+      [req.params.id, token, on]
+    );
     res.json({ ok: true, token, published: on });
-  } catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "server error" });
+  }
 });
 
 const lookupHits = new Map(); // ip+token -> { n, reset }
@@ -1482,14 +2050,29 @@ function lookupAllowed(key) {
   if (!h || h.reset < now) h = { n: 0, reset: now + 10 * 60 * 1000 };
   h.n++;
   lookupHits.set(key, h);
-  if (lookupHits.size > 5000) for (const [k, v] of lookupHits) if (v.reset < now) lookupHits.delete(k);
+  if (lookupHits.size > 5000)
+    for (const [k, v] of lookupHits) if (v.reset < now) lookupHits.delete(k);
   return h.n <= 25;
 }
 const normId = (v) => {
-  const t = String(v == null ? "" : v).trim().toLowerCase().replace(/\s+/g, "");
+  const t = String(v == null ? "" : v)
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "");
   return /^\d+$/.test(t) ? t.replace(/^0+(?=\d)/, "") : t;
 };
-const gradeOf = (a, pass) => (a == null ? "" : a >= 80 ? "A" : a >= 70 ? "B" : a >= 60 ? "C" : a >= pass ? "D" : "F");
+const gradeOf = (a, pass) =>
+  a == null
+    ? ""
+    : a >= 80
+    ? "A"
+    : a >= 70
+    ? "B"
+    : a >= 60
+    ? "C"
+    : a >= pass
+    ? "D"
+    : "F";
 
 app.get("/n/:token", (req, res) => {
   res.setHeader("X-Robots-Tag", "noindex, nofollow");
@@ -1500,10 +2083,19 @@ app.get("/n/:token", (req, res) => {
 
 app.get("/api/public/result-info/:token", async (req, res) => {
   try {
-    const { rows } = await pool.query("SELECT name FROM result_sets WHERE public_token=$1 AND published=true", [req.params.token]);
-    if (!rows.length) return res.status(404).json({ error: "Link-gan ma shaqeynayo ama waa la xiray." });
+    const { rows } = await pool.query(
+      "SELECT name FROM result_sets WHERE public_token=$1 AND published=true",
+      [req.params.token]
+    );
+    if (!rows.length)
+      return res
+        .status(404)
+        .json({ error: "Link-gan ma shaqeynayo ama waa la xiray." });
     res.json({ name: rows[0].name });
-  } catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "server error" });
+  }
 });
 
 app.post("/api/public/result", async (req, res) => {
@@ -1512,50 +2104,116 @@ app.post("/api/public/result", async (req, res) => {
     const sid = normId(req.body && req.body.id);
     const pickSchool = String((req.body && req.body.school) || "").trim();
     const pickCls = String((req.body && req.body.cls) || "").trim();
-    if (!lookupAllowed(req.ip + "|" + token)) return res.status(429).json({ error: "Isku-day badan. Fadlan ku celi 10 daqiiqo kadib." });
-    if (!token || !sid) return res.status(400).json({ error: "Geli ID-gaaga." });
-    const { rows } = await pool.query("SELECT name, class_name, data FROM result_sets WHERE public_token=$1 AND published=true", [token]);
-    if (!rows.length) return res.status(404).json({ error: "Link-gan ma shaqeynayo ama waa la xiray." });
+    if (!lookupAllowed(req.ip + "|" + token))
+      return res
+        .status(429)
+        .json({ error: "Isku-day badan. Fadlan ku celi 10 daqiiqo kadib." });
+    if (!token || !sid)
+      return res.status(400).json({ error: "Geli ID-gaaga." });
+    const { rows } = await pool.query(
+      "SELECT name, class_name, data FROM result_sets WHERE public_token=$1 AND published=true",
+      [token]
+    );
+    if (!rows.length)
+      return res
+        .status(404)
+        .json({ error: "Link-gan ma shaqeynayo ama waa la xiray." });
     const d = rows[0].data || {};
     const multi = !!d.multi;
     const pass = Number(d.pass) || 50;
     const subjects = d.subjects || [];
     const nz = (v) => (v === "" || v == null || isNaN(+v) ? null : +v);
-    const all = (d.students || []).map((s) => {
-      const v = subjects.map((_, i) => nz(s.s && s.s[i]));
-      const nn = v.filter((x) => x != null);
-      return { name: s.name || "", id: s.id || "", school: s.school || "", cls: s.cls || "", v, total: nn.length ? nn.reduce((a, b) => a + b, 0) : null, avg: nn.length ? nn.reduce((a, b) => a + b, 0) / nn.length : null };
-    }).filter((s) => s.avg != null);
+    const all = (d.students || [])
+      .map((s) => {
+        const v = subjects.map((_, i) => nz(s.s && s.s[i]));
+        const nn = v.filter((x) => x != null);
+        return {
+          name: s.name || "",
+          id: s.id || "",
+          school: s.school || "",
+          cls: s.cls || "",
+          v,
+          total: nn.length ? nn.reduce((a, b) => a + b, 0) : null,
+          avg: nn.length ? nn.reduce((a, b) => a + b, 0) / nn.length : null,
+        };
+      })
+      .filter((s) => s.avg != null);
     let hits = all.filter((s) => normId(s.id) === sid);
-    if (!hits.length) return res.status(404).json({ error: "ID-gan lama helin. Hubi ID-gaaga oo mar kale isku day." });
+    if (!hits.length)
+      return res
+        .status(404)
+        .json({
+          error: "ID-gan lama helin. Hubi ID-gaaga oo mar kale isku day.",
+        });
     if (hits.length > 1) {
       // ID isku mid ah oo dugsiyo kala duwan — ardaygu wuxuu dooranayaa dugsigiisa (magacyada lama muujiyo)
-      const sel = hits.filter((s) => s.school === pickSchool && s.cls === pickCls);
+      const sel = hits.filter(
+        (s) => s.school === pickSchool && s.cls === pickCls
+      );
       if (sel.length) hits = sel;
-      if (hits.length > 1 && new Set(hits.map((h) => h.school + "|" + h.cls)).size === 1) hits = [hits[0]];
+      if (
+        hits.length > 1 &&
+        new Set(hits.map((h) => h.school + "|" + h.cls)).size === 1
+      )
+        hits = [hits[0]];
       if (hits.length > 1) {
-        const seen = new Set(), choose = [];
-        hits.forEach((h) => { const k = h.school + "|" + h.cls; if (!seen.has(k)) { seen.add(k); choose.push({ school: h.school, cls: h.cls }); } });
+        const seen = new Set(),
+          choose = [];
+        hits.forEach((h) => {
+          const k = h.school + "|" + h.cls;
+          if (!seen.has(k)) {
+            seen.add(k);
+            choose.push({ school: h.school, cls: h.cls });
+          }
+        });
         return res.json({ choose });
       }
     }
     const me = hits[0];
     const rank = all.filter((x) => x.avg > me.avg).length + 1;
-    const grp = multi ? all.filter((x) => x.school === me.school && x.cls === me.cls) : all;
+    const grp = multi
+      ? all.filter((x) => x.school === me.school && x.cls === me.cls)
+      : all;
     const schoolRank = grp.filter((x) => x.avg > me.avg).length + 1;
-    const rows2 = subjects.map((nm, i) => {
-      const vals = grp.map((x) => x.v[i]).filter((x) => x != null);
-      return { subject: nm, score: me.v[i], classAvg: vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null, needsSupport: me.v[i] != null && me.v[i] < pass };
-    }).filter((r) => r.score != null);
+    const rows2 = subjects
+      .map((nm, i) => {
+        const vals = grp.map((x) => x.v[i]).filter((x) => x != null);
+        return {
+          subject: nm,
+          score: me.v[i],
+          classAvg: vals.length
+            ? vals.reduce((a, b) => a + b, 0) / vals.length
+            : null,
+          needsSupport: me.v[i] != null && me.v[i] < pass,
+        };
+      })
+      .filter((r) => r.score != null);
     res.json({
-      resultName: rows[0].name, name: me.name, id: me.id, pass,
-      school: multi ? me.school : "", cls: multi ? me.cls : (rows[0].class_name || ""), multi,
-      schoolRank: multi ? schoolRank : null, schoolOf: multi ? grp.length : null,
-      total: me.total, avg: Math.round(me.avg * 10) / 10, grade: gradeOf(me.avg, pass), rank, of: all.length,
-      subjects: rows2.map((r) => ({ ...r, classAvg: r.classAvg == null ? null : Math.round(r.classAvg * 10) / 10 })),
+      resultName: rows[0].name,
+      name: me.name,
+      id: me.id,
+      pass,
+      school: multi ? me.school : "",
+      cls: multi ? me.cls : rows[0].class_name || "",
+      multi,
+      schoolRank: multi ? schoolRank : null,
+      schoolOf: multi ? grp.length : null,
+      total: me.total,
+      avg: Math.round(me.avg * 10) / 10,
+      grade: gradeOf(me.avg, pass),
+      rank,
+      of: all.length,
+      subjects: rows2.map((r) => ({
+        ...r,
+        classAvg: r.classAvg == null ? null : Math.round(r.classAvg * 10) / 10,
+      })),
     });
-  } catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "server error" });
+  }
 });
 
-
-app.listen(PORT, () => console.log(`🚀 Server wuxuu ku shaqeynayaa port ${PORT}`));
+app.listen(PORT, () =>
+  console.log(`🚀 Server wuxuu ku shaqeynayaa port ${PORT}`)
+);
