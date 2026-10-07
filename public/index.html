@@ -1031,24 +1031,15 @@
     return `<div class="kpis"><div class="kpi"><b>${D.st.length}</b><span>Arday</span></div><div class="kpi"><b>${f1(D.cls)}</b><span>Celceliska fasalka</span></div><div class="kpi"><b>${pr==null?"–":Math.round(pr*100)+"%"}</b><span>Gudbay</span></div><div class="kpi"><b>${D.best?esc(D.best.name):"–"}</b><span>Maadada ugu fiican (${D.best?f1(D.best.avg):"–"})</span></div><div class="kpi"><b>${D.worst?esc(D.worst.name):"–"}</b><span>Maadada ugu liidata (${D.worst?f1(D.worst.avg):"–"})</span></div></div>`;}
   function subjHTML(D,detail){
     if(!D.ws.length)return `<div class="rtxt">Weli dhibco lama gelin.</div>`;
-    let h=`<h2>📚 Falanqaynta Maaddooyinka</h2><div class="rscroll"><table class="rtbl"><tr><th class="l">Maaddada</th><th>Arday</th><th>Celcelis</th><th>Ugu sarreeya</th><th>Ugu hooseeya</th><th>% Gudbay</th><th>Dhacay</th><th>SD</th><th>Boos</th></tr>`+
-      D.sub.filter(x=>x.avg!=null).map(x=>`<tr><td class="l"><b>${esc(x.name)}</b></td><td>${x.n}</td><td class="${x.avg<R.pass?"bad":""}">${f1(x.avg)}</td><td>${x.max}</td><td>${x.min}</td><td>${Math.round(x.pass*100)}%</td><td>${x.fail}</td><td>${f1(x.sd)}</td><td>${x.rank}</td></tr>`).join("")+`</table></div>`;
-    h+=`<div class="ex-sub">Celceliska maaddo kasta</div>`+hbar(D.ws.map(x=>({l:x.name,v:x.avg,c:x.avg<R.pass?"#c0392b":x===D.best?"#1e8e5a":"#1e4fa3"})),100);
+    let h=`<h2>📚 Falanqaynta Maaddooyinka</h2><div class="rscroll"><table class="rtbl"><tr><th class="l">Maaddada</th><th>Arday</th><th>Celcelis</th><th>Ugu sarreeya</th><th>Ugu hooseeya</th><th>% Gudbay</th><th>Dhacay</th><th>Boos</th></tr>`+
+      D.sub.filter(x=>x.avg!=null).map(x=>`<tr><td class="l"><b>${esc(x.name)}</b></td><td>${x.n}</td><td class="${x.avg<R.pass?"bad":""}">${f1(x.avg)}</td><td>${x.max}</td><td>${x.min}</td><td>${Math.round(x.pass*100)}%</td><td>${x.fail}</td><td>${x.rank}</td></tr>`).join("")+`</table></div>`;
     h+=`<div class="ex-sub">Boqolkiiba ardayda gudbay</div>`+hbar(D.ws.map(x=>({l:x.name,v:x.pass*100,c:"#f2a900"})),100,v=>Math.round(v)+"%");
-    if(detail===false)return h;
-    h+=`<div class="ex-sub">Falanqeyn maaddo-maaddo</div>`+D.ws.map(x=>{
-      const vs=D.st.filter(s=>s.v[x.i]!=null).sort((a,b)=>b.v[x.i]-a.v[x.i]);const top=vs.slice(0,3).map(s=>s.name+" ("+s.v[x.i]+")").join(", "),low=vs.slice(-3).reverse().map(s=>s.name+" ("+s.v[x.i]+")").join(", ");
-      const lvl=x.avg>=75?`<span class="good">aad u fiican</span>`:x.avg>=R.pass?"dhexdhexaad":`<span class="bad">u baahan taageero</span>`;
-      const diff=x.avg-D.cls,spr=x.sd==null?"":x.sd>15?"Ardayda aad bay u kala duwan yihiin (kala duwanaansho weyn).":"Ardayda dhibcahoodu way isku dhow yihiin.";
-      return `<div class="rtxt"><b>${esc(x.name)}</b> – celcelis ${f1(x.avg)} (boos ${x.rank}/${D.ws.length}), heerkeedu waa ${lvl}; ${diff>=0?"wuxuu ka sarreeyaa":"wuxuu ka hooseeyaa"} celceliska guud ${f1(Math.abs(diff))} dhibcood. ${x.fail} arday ayaa dhacay. ${spr}<br>Ugu sarreeya: ${esc(top)}. Ugu hooseeya: ${esc(low)}.${x.avg<R.pass?` <i>Talo: macallinka maaddadan tababar iyo taageero ha helo, ardayda ku liitana taageero gaar ah iyadoo waalidka la kaashanayo.</i>`:""}</div>`;}).join("");
     return h;}
   function stuHTML(D){
     if(!D.st.length)return `<div class="rtxt">Weli dhibco lama gelin.</div>`;
     const S=[...D.st].sort((a,b)=>a.rank-b.rank),gs=["A","B","C","D","F"];
-    let h=`<h2>🎓 Falanqaynta Ardayda</h2><div class="ex-sub">10-ka ugu sarreeya</div>`+hbar(S.slice(0,10).map(s=>({l:s.name,v:s.avg,c:"#1e8e5a"})),100)+
-      `<div class="ex-sub">10-ka ugu hooseeya</div>`+hbar(S.slice(-10).reverse().map(s=>({l:s.name,v:s.avg,c:"#c0392b"})),100)+
-      `<div class="ex-sub">Qaybinta heerarka</div>`+hbar(gs.map(g=>({l:g+(g==="F"?" (Hoose)":g==="D"?" (Gudbay)":""),v:D.st.filter(s=>s.grade===g).length,c:gcol(g)})),Math.max(1,D.st.length),v=>String(v));
-    return h;}
+    return `<h2>🎓 Falanqaynta Ardayda</h2><div class="ex-sub">Qaybinta heerarka</div>`+hbar(gs.map(g=>({l:g+(g==="F"?" (Hoose)":g==="D"?" (Gudbay)":""),v:D.st.filter(s=>s.grade===g).length,c:gcol(g)})),Math.max(1,D.st.length),v=>String(v))+
+      `<div class="ex-sub">10-ka ugu sarreeya</div>`+hbar(S.slice(0,10).map(s=>({l:s.name,v:s.avg,c:"#1e8e5a"})),100);}
   function supportHTML(D,tbl){
     const S=D.st.filter(s=>s.low>0).sort((a,b)=>b.low-a.low||a.avg-b.avg);
     let h=`<h2>🆘 Falanqaynta Ardayda u Baahan Taageero</h2><div class="rtxt">Arday kasta oo ka hooseeya <b>${R.pass}%</b> maado ayaa loo aqoonsaday inuu u baahan yahay taageero maadadaas. <b>${S.length}</b> arday ka mid ah <b>${D.st.length}</b> ayaa u baahan taageero.</div>`;
@@ -1077,11 +1068,9 @@
     const D=rCalc();
     if(rView==="taageero")b.innerHTML=`<div class="card">${supportHTML(D,true)}</div>`;
     else if(rView==="maado")b.innerHTML=`<div class="card">${kpiHTML(D)}${subjHTML(D)}</div>`;
-    else if(rView==="arday"){const S=[...D.st].sort((a,b)=>a.rank-b.rank);
-      b.innerHTML=`<div class="card">${stuHTML(D)}</div><div class="card"><h2>🔎 Falanqeyn arday kooban</h2><select id="rPick">${S.map((s,i)=>`<option value="${i}">${s.rank}. ${esc(s.name)}</option>`).join("")}</select><div id="rProf">${stuProfile(D,0)}</div></div>`;
-      const pk=$("rPick");if(pk)pk.addEventListener("change",()=>{$("rProf").innerHTML=stuProfile(D,+pk.value);});}
+    else if(rView==="arday")b.innerHTML=`<div class="card">${stuHTML(D)}</div>`;
     else b.innerHTML=`<div class="card" id="rRep"><div class="actions no-print"><button class="btn-ghost" id="rPrint" type="button">🖨️ Daabac / Save PDF</button></div>${reportBody(D)}</div>`,$("rPrint")&&$("rPrint").addEventListener("click",()=>rPrint(D));}
-  function reportBody(D){return `<h2 style="text-align:center">WARBIXINTA NATIIJADA FORM 4${R.name?" – "+esc(R.name):""}</h2><div class="sub" style="text-align:center">Golaha Horumarinta Dugsiyada Dadweynaha (GHDD)</div>${kpiHTML(D)}${sumHTML(D)}${subjHTML(D,false)}${stuHTML(D)}${supportHTML(D)}`;}
+  function reportBody(D){return `<h2 style="text-align:center">WARBIXINTA NATIIJADA FORM 4${R.name?" – "+esc(R.name):""}</h2><div class="sub" style="text-align:center">Golaha Horumarinta Dugsiyada Dadweynaha (GHDD)</div>${kpiHTML(D)}${sumHTML(D)}${subjHTML(D)}${stuHTML(D)}`;}
   function rPrint(D){const w=window.open("","_blank");if(!w)return;
     w.document.write(`<html><head><meta charset="utf-8"><title>Warbixin</title><style>body{font-family:Arial,sans-serif;margin:18px;color:#111}h2{font-size:16px}.kpis{display:flex;gap:8px;flex-wrap:wrap}.kpi{border:1px solid #ccc;border-radius:8px;padding:8px;text-align:center;min-width:110px}.kpi b{display:block;color:#1e4fa3}.kpi span{font-size:11px;color:#555}table{border-collapse:collapse;width:100%;font-size:11px}th,td{border:1px solid #bbb;padding:3px 5px;text-align:center}.l{text-align:left}.rtxt{font-size:12px;line-height:1.5;margin:5px 0}.l{text-align:left}.ex-sub{font-weight:700;margin:12px 0 4px}svg{max-width:560px}.good{color:#1e8e5a;font-weight:700}.bad{color:#c0392b;font-weight:700}.sub{font-size:12px;color:#555}</style></head><body>${reportBody(D)}</body></html>`);
     w.document.close();setTimeout(()=>w.print(),400);}
