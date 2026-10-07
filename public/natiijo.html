@@ -61,27 +61,34 @@
     $("rn").textContent=j.name||"";
   }).catch(()=>{});
 
-  async function go(){
+  async function go(pick){
+    pick=pick&&pick.school!=null?pick:{};
     const id=$("sid").value.trim();$("err").classList.add("hidden");
     if(!id)return showErr("Fadlan geli ID-gaaga.");
     $("go").disabled=true;$("go").textContent="⏳ Waa la raadinayaa...";
     try{
-      const r=await fetch("/api/public/result",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({token,id})});
+      const r=await fetch("/api/public/result",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({token,id,school:pick.school||"",cls:pick.cls||""})});
       const j=await r.json().catch(()=>({}));
       if(!r.ok)throw new Error(j.error||"Khalad ayaa dhacay.");
-      render(j);
-    }catch(e){showErr(e.message);}
+      if(j.choose)chooseSchool(j.choose);else render(j);
+    }catch(e){$("formCard").classList.remove("hidden");$("out").classList.add("hidden");showErr(e.message);}
     $("go").disabled=false;$("go").textContent="🔍 Arag Natiijadayda";
   }
 
+  function chooseSchool(list){
+    $("formCard").classList.add("hidden");$("out").classList.remove("hidden");
+    $("out").innerHTML='<div class="card"><b>ID-gan wuxuu ku jiraa dugsiyo kala duwan. Dooro dugsigaaga:</b>'+list.map((c,i)=>'<button class="btn-ghost" type="button" data-i="'+i+'">'+esc(c.school||"–")+(c.cls?" · "+esc(c.cls):"")+'</button>').join("")+'<button class="btn-ghost" id="back" type="button">↩️ Ka noqo</button></div>';
+    $("out").querySelectorAll("button[data-i]").forEach(b=>b.addEventListener("click",()=>go(list[+b.dataset.i])));
+    $("back").addEventListener("click",()=>{$("out").classList.add("hidden");$("out").innerHTML="";$("formCard").classList.remove("hidden");});
+  }
   const sg=(v,p)=>{v=Number(v);return isNaN(v)?"":v>=80?"A":v>=70?"B":v>=60?"C":v>=p?"D":"F";};
   function render(d){
     const need=d.subjects.filter(x=>x.needsSupport);
     $("out").classList.remove("hidden");
     $("out").innerHTML=
-      `<div class="card"><h2 style="margin:0 0 2px;font-size:1.1rem">${esc(d.name)}</h2><div class="sub" style="text-align:start;margin:0">ID: ${esc(d.id)}</div>
+      `<div class="card"><h2 style="margin:0 0 2px;font-size:1.1rem">${esc(d.name)}</h2><div class="sub" style="text-align:start;margin:0;line-height:1.7">ID: <b>${esc(d.id)}</b>${d.school?`<br>Dugsiga: <b>${esc(d.school)}</b>`:""}${d.cls?`<br>Fasalka: <b>${esc(d.cls)}</b>`:""}</div>
       <div class="kpis"><div class="kpi"><b>${esc(d.total)}</b><span>Wadarta</span></div><div class="kpi"><b>${f1(d.avg)}</b><span>Celcelis</span></div><div class="kpi"><b style="color:${gcol(d.grade)}">${esc(d.grade)}</b><span>Heer</span></div></div>
-      <div class="sub" style="margin:0 0 10px">Booskaaga fasalka: <b>${d.rank}</b> / ${d.of}</div>
+      <div class="sub" style="margin:0 0 10px">${d.multi?`Booskaaga dugsigaaga (fasalkaaga): <b>${d.schoolRank}</b> / ${d.schoolOf}<br>Booska guud (dhammaan dugsiyada): <b>${d.rank}</b> / ${d.of}`:`Booskaaga fasalka: <b>${d.rank}</b> / ${d.of}`}</div>
       <table><tr><th class="l">Maaddada</th><th>Dhibcaha</th><th>Heerka</th><th></th></tr>`+
       d.subjects.map(x=>`<tr><td class="l">${esc(x.subject)}</td><td class="${x.needsSupport?"bad":"good"}">${esc(x.score)}</td><td style="font-weight:700;color:${gcol(sg(x.score,d.pass))}">${sg(x.score,d.pass)}</td><td>${x.needsSupport?"⚠️":"✅"}</td></tr>`).join("")+`</table>`+
       (need.length?`<div class="support"><b>Maaddooyinka aad u baahan tahay taageero (ka hooseeya ${d.pass}%):</b><br>${need.map(x=>`• ${esc(x.subject)} (<span class="bad">${esc(x.score)}</span>)`).join("<br>")}<br><i>Fadlan la xariir xafiiska Maamulka si lagu siiyo taageero.</i></div>`:`<div class="ok">🎉 Hambalyo! Dhammaan maaddooyinka waad ka gudubtay ${d.pass}%.</div>`)+
