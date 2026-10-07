@@ -1423,7 +1423,8 @@ const PORT = process.env.PORT || 3000;
 // ---------- Natiijooyinka ardayda (Form 4) ----------
 app.get("/api/results", requireAdmin, async (req, res) => {
   try {
-    const { rows } = await pool.query("SELECT id, name, class_name, updated_at, jsonb_array_length(COALESCE(data->'students','[]'::jsonb)) AS n FROM result_sets ORDER BY updated_at DESC LIMIT 100");
+    const multi = req.query.multi === "1"; // 1 = natiijooyinka dugsiyada (isku-darsan), 0 = Form 4 caadi ah
+    const { rows } = await pool.query("SELECT id, name, class_name, updated_at, jsonb_array_length(COALESCE(data->'students','[]'::jsonb)) AS n FROM result_sets WHERE COALESCE((data->>'multi')::boolean,false)=$1 ORDER BY updated_at DESC LIMIT 100", [multi]);
     res.json(rows);
   } catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
 });
@@ -1439,16 +1440,18 @@ app.post("/api/results", requireAdmin, async (req, res) => {
     const b = req.body || {};
     const id = b.id || crypto.randomUUID();
     const subjects = Array.isArray(b.subjects) ? b.subjects.slice(0, 20).map((x) => String(x).slice(0, 60)) : [];
-    const students = (Array.isArray(b.students) ? b.students.slice(0, 500) : []).map((x) => ({
+    const multi = !!b.multi; // natiijooyinka dugsiyo badan (school + cls ardayga kasta)
+    const students = (Array.isArray(b.students) ? b.students.slice(0, multi ? 5000 : 500) : []).map((x) => ({
       name: String((x && x.name) || "").slice(0, 120),
       id: String((x && x.id) || "").trim().slice(0, 60),
       s: Array.isArray(x && x.s) ? x.s.slice(0, 20).map((v) => (v === "" || v == null ? "" : String(v).slice(0, 8))) : [],
+      ...(multi ? { school: String((x && x.school) || "").trim().slice(0, 120), cls: String((x && x.cls) || "").trim().slice(0, 50) } : {}),
     }));
-    const data = { subjects, students, pass: Number(b.pass) || 50 };
+    const data = { subjects, students, pass: Number(b.pass) || 50, ...(multi ? { multi: true } : {}) };
     await pool.query(
       `INSERT INTO result_sets (id, name, class_name, data, updated_at) VALUES ($1,$2,$3,$4,now())
        ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, class_name=EXCLUDED.class_name, data=EXCLUDED.data, updated_at=now()`,
-      [id, String(b.name || "").slice(0, 200), String(b.class_name || "Form 4").slice(0, 50), JSON.stringify(data)]
+      [id, String(b.name || "").slice(0, 200), multi ? "Dugsiyo" : String(b.class_name || "Form 4").slice(0, 50), JSON.stringify(data)]
     );
     res.json({ ok: true, id });
   } catch (e) { console.error(e); res.status(500).json({ error: "server error" }); }
@@ -1507,28 +1510,47 @@ app.post("/api/public/result", async (req, res) => {
   try {
     const token = String((req.body && req.body.token) || "");
     const sid = normId(req.body && req.body.id);
+    const pickSchool = String((req.body && req.body.school) || "").trim();
+    const pickCls = String((req.body && req.body.cls) || "").trim();
     if (!lookupAllowed(req.ip + "|" + token)) return res.status(429).json({ error: "Isku-day badan. Fadlan ku celi 10 daqiiqo kadib." });
     if (!token || !sid) return res.status(400).json({ error: "Geli ID-gaaga." });
-    const { rows } = await pool.query("SELECT name, data FROM result_sets WHERE public_token=$1 AND published=true", [token]);
+    const { rows } = await pool.query("SELECT name, class_name, data FROM result_sets WHERE public_token=$1 AND published=true", [token]);
     if (!rows.length) return res.status(404).json({ error: "Link-gan ma shaqeynayo ama waa la xiray." });
     const d = rows[0].data || {};
+    const multi = !!d.multi;
     const pass = Number(d.pass) || 50;
     const subjects = d.subjects || [];
     const nz = (v) => (v === "" || v == null || isNaN(+v) ? null : +v);
     const all = (d.students || []).map((s) => {
       const v = subjects.map((_, i) => nz(s.s && s.s[i]));
       const nn = v.filter((x) => x != null);
-      return { name: s.name || "", id: s.id || "", v, total: nn.length ? nn.reduce((a, b) => a + b, 0) : null, avg: nn.length ? nn.reduce((a, b) => a + b, 0) / nn.length : null };
+      return { name: s.name || "", id: s.id || "", school: s.school || "", cls: s.cls || "", v, total: nn.length ? nn.reduce((a, b) => a + b, 0) : null, avg: nn.length ? nn.reduce((a, b) => a + b, 0) / nn.length : null };
     }).filter((s) => s.avg != null);
-    const me = all.find((s) => normId(s.id) === sid);
-    if (!me) return res.status(404).json({ error: "ID-gan lama helin. Hubi ID-gaaga oo mar kale isku day." });
+    let hits = all.filter((s) => normId(s.id) === sid);
+    if (!hits.length) return res.status(404).json({ error: "ID-gan lama helin. Hubi ID-gaaga oo mar kale isku day." });
+    if (hits.length > 1) {
+      // ID isku mid ah oo dugsiyo kala duwan — ardaygu wuxuu dooranayaa dugsigiisa (magacyada lama muujiyo)
+      const sel = hits.filter((s) => s.school === pickSchool && s.cls === pickCls);
+      if (sel.length) hits = sel;
+      if (hits.length > 1 && new Set(hits.map((h) => h.school + "|" + h.cls)).size === 1) hits = [hits[0]];
+      if (hits.length > 1) {
+        const seen = new Set(), choose = [];
+        hits.forEach((h) => { const k = h.school + "|" + h.cls; if (!seen.has(k)) { seen.add(k); choose.push({ school: h.school, cls: h.cls }); } });
+        return res.json({ choose });
+      }
+    }
+    const me = hits[0];
     const rank = all.filter((x) => x.avg > me.avg).length + 1;
+    const grp = multi ? all.filter((x) => x.school === me.school && x.cls === me.cls) : all;
+    const schoolRank = grp.filter((x) => x.avg > me.avg).length + 1;
     const rows2 = subjects.map((nm, i) => {
-      const vals = all.map((x) => x.v[i]).filter((x) => x != null);
+      const vals = grp.map((x) => x.v[i]).filter((x) => x != null);
       return { subject: nm, score: me.v[i], classAvg: vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null, needsSupport: me.v[i] != null && me.v[i] < pass };
     }).filter((r) => r.score != null);
     res.json({
       resultName: rows[0].name, name: me.name, id: me.id, pass,
+      school: multi ? me.school : "", cls: multi ? me.cls : (rows[0].class_name || ""), multi,
+      schoolRank: multi ? schoolRank : null, schoolOf: multi ? grp.length : null,
       total: me.total, avg: Math.round(me.avg * 10) / 10, grade: gradeOf(me.avg, pass), rank, of: all.length,
       subjects: rows2.map((r) => ({ ...r, classAvg: r.classAvg == null ? null : Math.round(r.classAvg * 10) / 10 })),
     });
