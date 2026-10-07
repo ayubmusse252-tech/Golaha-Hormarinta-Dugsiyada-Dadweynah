@@ -84,7 +84,7 @@
       <div class="sub" style="margin:0 0 10px">Booskaaga fasalka: <b>${d.rank}</b> / ${d.of}</div>
       <table><tr><th class="l">Maaddada</th><th>Dhibcaha</th><th>Heerka</th><th></th></tr>`+
       d.subjects.map(x=>`<tr><td class="l">${esc(x.subject)}</td><td class="${x.needsSupport?"bad":"good"}">${esc(x.score)}</td><td style="font-weight:700;color:${gcol(sg(x.score,d.pass))}">${sg(x.score,d.pass)}</td><td>${x.needsSupport?"⚠️":"✅"}</td></tr>`).join("")+`</table>`+
-      (need.length?`<div class="support"><b>Maaddooyinka aad u baahan tahay taageero (ka hooseeya ${d.pass}%):</b><br>${need.map(x=>`• ${esc(x.subject)} (<span class="bad">${esc(x.score)}</span>)`).join("<br>")}<br><i>Fadlan la hadal macallinka maaddooyinkaas si aad taageero u hesho.</i></div>`:`<div class="ok">🎉 Hambalyo! Dhammaan maaddooyinka waad ka gudubtay ${d.pass}%.</div>`)+
+      (need.length?`<div class="support"><b>Maaddooyinka aad u baahan tahay taageero (ka hooseeya ${d.pass}%):</b><br>${need.map(x=>`• ${esc(x.subject)} (<span class="bad">${esc(x.score)}</span>)`).join("<br>")}<br><i>Fadlan la xariir xafiiska Maamulka si lagu siiyo taageero.</i></div>`:`<div class="ok">🎉 Hambalyo! Dhammaan maaddooyinka waad ka gudubtay ${d.pass}%.</div>`)+
       `</div><div class="no-print"><button class="btn-ghost" id="pr" type="button">🖨️ Daabac / Save PDF</button><button class="btn-ghost" id="again" type="button">↩️ ID kale</button></div>`;
     $("formCard").classList.add("hidden");
     $("pr").addEventListener("click",()=>window.print());
