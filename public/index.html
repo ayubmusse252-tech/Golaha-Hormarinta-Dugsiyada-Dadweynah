@@ -152,6 +152,19 @@
 </style>
 </head>
 <body>
+<div id="fatal" style="display:none;position:fixed;inset:0 0 auto 0;z-index:99999;background:#fdf1ef;border-bottom:2px solid #c0392b;color:#7a1f14;padding:12px 14px;font:14px/1.5 Arial,sans-serif"></div>
+<script>
+/* Ilaalinta bog-cadcad: haddii script-ku dhaco ama faylku dhamaystiran yahay, khaladka halkan ayuu ka muuqanayaa */
+(function(){
+  function show(m){var e=document.getElementById("fatal");if(!e)return;e.style.display="block";
+    e.textContent="⚠️ Khalad: "+m+" — Hubi in index.html si buuxda loo upload-gareeyay (waa inuu ku dhammaadaa </html>). Fur /version si aad u hubiso faylasha server-ka.";}
+  window.addEventListener("error",function(ev){show(ev.message||"JavaScript error");});
+  window.addEventListener("unhandledrejection",function(ev){show(String(ev.reason&&ev.reason.message||ev.reason||"promise error"));});
+  setTimeout(function(){var a=document.getElementById("appShell"),l=document.getElementById("loginScreen");
+    if(a&&l&&a.classList.contains("hidden")&&l.classList.contains("hidden"))show("app-ku ma bilaaban");},4000);
+})();
+</script>
+<noscript><div style="padding:14px;font-family:Arial">JavaScript waa in la furaa si app-ku u shaqeeyo.</div></noscript>
 
 <div id="loginScreen" class="hidden">
   <h1>📝 Samaynta Imtixaanka</h1>
@@ -1315,16 +1328,4 @@
     else if(t.id==="mPrintBtn"&&$("mRep")){const c=$("mRep").cloneNode(true);c.querySelectorAll(".no-print").forEach(x=>x.remove());mPrint(c.innerHTML);}});
   $("mBody").addEventListener("input",e=>{if(e.target.id==="mQ"){mQ=e.target.value;mArFill();}});
   $("mBody").addEventListener("change",e=>{if(e.target.id==="mFSel"){mFilter=e.target.value;if(mView==="arday")mArFill();else mBodyRender();}});
-  $("mNewBtn").addEventListener("click",()=>{mNew();$("mSaved").value="";mRender();$("mStatus").textContent="";});
-  async function mSave(){M.name=$("mName").value||M.name||"Natiijo Dugsiyo – "+new Date().toLocaleDateString("en-GB");
-    const j=await api("/api/results",{method:"POST",body:JSON.stringify({id:M.id,multi:true,name:M.name,subjects:M.subjects,students:M.students,pass:M.pass})});
-    M.id=j.id;await mList(M.id);return j;}
-  $("mSaveBtn").addEventListener("click",async()=>{try{await mSave();$("mStatus").textContent="✅ Waa la keydiyay.";}catch(err){$("mStatus").textContent="❌ "+err.message;}});
-  $("mMakeBtn").addEventListener("click",async()=>{try{
-      const D=mCalc(M.students);if(!D.st.length)throw new Error("Marka hore soo geli natiijada dugsi ama ka badan.");
-      $("mStatus").textContent="⏳ Natiijada waa la samaynayaa...";
-      await mSave();await mPublish(true,false);mView="isku";mRender();
-      const noId=M.students.filter(x=>!x.id).length;
-      $("mStatus").innerHTML="✅ Natiijada waa la isku daray, la keydiyay, link-ga ardayduna waa diyaar."+(noId?"<br>⚠️ "+noId+" arday ID ma lahan.":"");
-    }catch(err){$("mStatus").textContent="❌ "+err.message;}});
-  $("mDelBtn").addEventListener("click",async()=>{if(!M.id||!confi
+  $("mNewBtn").addEventListener("click",()=>{mNew();$("mSaved").valu
