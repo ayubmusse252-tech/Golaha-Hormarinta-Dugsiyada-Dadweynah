@@ -74,6 +74,7 @@
     $("go").disabled=false;$("go").textContent="🔍 Arag Natiijadayda";
   }
 
+  const sg=(v,p)=>{v=Number(v);return isNaN(v)?"":v>=80?"A":v>=70?"B":v>=60?"C":v>=p?"D":"F";};
   function render(d){
     const need=d.subjects.filter(x=>x.needsSupport);
     $("out").classList.remove("hidden");
@@ -81,8 +82,8 @@
       `<div class="card"><h2 style="margin:0 0 2px;font-size:1.1rem">${esc(d.name)}</h2><div class="sub" style="text-align:start;margin:0">ID: ${esc(d.id)}</div>
       <div class="kpis"><div class="kpi"><b>${esc(d.total)}</b><span>Wadarta</span></div><div class="kpi"><b>${f1(d.avg)}</b><span>Celcelis</span></div><div class="kpi"><b style="color:${gcol(d.grade)}">${esc(d.grade)}</b><span>Heer</span></div></div>
       <div class="sub" style="margin:0 0 10px">Booskaaga fasalka: <b>${d.rank}</b> / ${d.of}</div>
-      <table><tr><th class="l">Maaddada</th><th>Dhibcaha</th><th>Celceliska fasalka</th><th></th></tr>`+
-      d.subjects.map(x=>`<tr><td class="l">${esc(x.subject)}</td><td class="${x.needsSupport?"bad":"good"}">${esc(x.score)}</td><td>${f1(x.classAvg)}</td><td>${x.needsSupport?"⚠️":"✅"}</td></tr>`).join("")+`</table>`+
+      <table><tr><th class="l">Maaddada</th><th>Dhibcaha</th><th>Heerka</th><th></th></tr>`+
+      d.subjects.map(x=>`<tr><td class="l">${esc(x.subject)}</td><td class="${x.needsSupport?"bad":"good"}">${esc(x.score)}</td><td style="font-weight:700;color:${gcol(sg(x.score,d.pass))}">${sg(x.score,d.pass)}</td><td>${x.needsSupport?"⚠️":"✅"}</td></tr>`).join("")+`</table>`+
       (need.length?`<div class="support"><b>Maaddooyinka aad u baahan tahay taageero (ka hooseeya ${d.pass}%):</b><br>${need.map(x=>`• ${esc(x.subject)} (<span class="bad">${esc(x.score)}</span>)`).join("<br>")}<br><i>Fadlan la hadal macallinka maaddooyinkaas si aad taageero u hesho.</i></div>`:`<div class="ok">🎉 Hambalyo! Dhammaan maaddooyinka waad ka gudubtay ${d.pass}%.</div>`)+
       `</div><div class="no-print"><button class="btn-ghost" id="pr" type="button">🖨️ Daabac / Save PDF</button><button class="btn-ghost" id="again" type="button">↩️ ID kale</button></div>`;
     $("formCard").classList.add("hidden");
