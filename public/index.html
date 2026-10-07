@@ -1053,7 +1053,7 @@
     const S=D.st.filter(s=>s.low>0).sort((a,b)=>b.low-a.low||a.avg-b.avg);
     let h=`<h2>🆘 Falanqaynta Ardayda u Baahan Taageero</h2><div class="rtxt">Arday kasta oo ka hooseeya <b>${R.pass}%</b> maado ayaa loo aqoonsaday inuu u baahan yahay taageero maadadaas. <b>${S.length}</b> arday ka mid ah <b>${D.st.length}</b> ayaa u baahan taageero.</div>`;
     if(!S.length)return h+`<div class="rtxt good">Ardayna kama hooseyso ${R.pass}% maado kasta.</div>`;
-    if(tbl)h+=`<div class="rscroll"><table class="rtbl"><tr><th>#</th><th>ID</th><th class="l">Magaca</th><th class="l">Maaddooyinka uu u baahan yahay taageero (dhibcaha)</th></tr>`+S.map((s,i)=>`<tr><td>${i+1}</td><td>${esc(s.id)}</td><td class="l">${esc(s.name)}</td><td class="l">${s.lowSubs.map(x=>`${esc(x.n)} (<span class="bad">${x.v}</span>)`).join(", ")}</td></tr>`).join("")+`</table></div>`;
+    if(tbl)h+=`<div class="rscroll"><table class="rtbl"><tr><th>#</th><th>ID</th><th class="l">Magaca</th>${R.subjects.map(n=>`<th>${esc(n)}</th>`).join("")}<th>Tirada</th></tr>`+S.map((s,i)=>`<tr><td>${i+1}</td><td>${esc(s.id)}</td><td class="l">${esc(s.name)}</td>${R.subjects.map((_,k)=>{const v=s.v[k];return v!=null&&v<R.pass?`<td class="bad">${v}</td>`:`<td></td>`;}).join("")}<td class="${s.low>=3?"bad":""}">${s.low}</td></tr>`).join("")+`</table></div>`;
     return h;}
   function stuProfile(D,idx){const s=[...D.st].sort((a,b)=>a.rank-b.rank)[idx];if(!s)return"";
     const sv=D.sub.map(x=>({n:x.name,v:s.v[x.i],c:x.avg})).filter(x=>x.v!=null),b=[...sv].sort((p,q)=>q.v-p.v);const pct=Math.round(100*(D.st.length-s.rank)/Math.max(1,D.st.length-1||1));
